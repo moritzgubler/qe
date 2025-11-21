@@ -32,7 +32,7 @@ SUBROUTINE summary()
   USE klist,           ONLY : degauss, smearing, lgauss, ltetra, nkstot, xk, &
                               wk, nelec, nelup, neldw, two_fermi_energies
   USE control_flags,   ONLY : imix, nmix, mixing_beta, nstep, lscf, &
-                              tr2, isolve, lmd, lbfgs, iverbosity, tqr, &
+                              tr2, isolve, lmd, lbfgs,lsqnm, iverbosity, tqr, &
                               tq_smoothing, tbeta_smoothing, llondon, ldftd3
   USE noncollin_module,ONLY : noncolin, domag, lspinorb
   USE funct,           ONLY : write_dft_name
@@ -107,7 +107,7 @@ SUBROUTINE summary()
   WRITE( stdout, 103) nbnd, ecutwfc, ecutrho
   IF ( xclib_dft_is('hybrid') ) WRITE( stdout, 104) ecutfock
   IF ( lscf) WRITE( stdout, 105) tr2, mixing_beta, nmix, mixing_style
-  IF ( lmd .OR. lbfgs ) WRITE (stdout, 106) epse, epsf
+  IF ( lmd .OR. lbfgs .OR. lsqnm ) WRITE (stdout, 106) epse, epsf
   IF ( lmovecell ) WRITE (stdout, 107) epsp
   !
 100 FORMAT( /,/,5X, &
@@ -138,7 +138,7 @@ SUBROUTINE summary()
   !
   call write_dft_name ( ) 
   !
-  IF ( lmd .OR. lbfgs ) &
+  IF ( lmd .OR. lbfgs .or. lsqnm) &
      WRITE( stdout, '(5X,"nstep                     = ",I12,/)' ) nstep
   !
   IF (noncolin) THEN

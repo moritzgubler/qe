@@ -291,7 +291,7 @@ SUBROUTINE control_iosys()
                             rmm_ndim, rmm_conv, gs_nblock, rmm_with_davidson, &
                             tr2, imix, gamma_only, tnosep, tnoseh, &
                             nmix, iverbosity, smallmem, nexxiter, niter, &
-                            io_level, ethr, lscf, lbfgs, lmd, &
+                            io_level, ethr, lscf, lbfgs, lsqnm, lmd, &
                             lbands, lconstrain, restart, &
                             llondon, ldftd3, do_makov_payne, lxdm, &
                             lensemb, lforce   => tprnfor, &
@@ -495,6 +495,10 @@ SUBROUTINE control_iosys()
         !
         lbfgs = .true.
         !
+     CASE( 'sqnm')
+         !
+         lsqnm = .true.
+         !
      CASE ( 'damp' )
         !
         lmd     = .true.
@@ -590,6 +594,11 @@ SUBROUTINE control_iosys()
      CASE( 'bfgs' )
         !
         lbfgs = .true.
+        lmd   = .false.
+        !
+     CASE( 'sqnm' )
+        !
+        lsqnm = .true.
         lmd   = .false.
         !
      CASE ( 'ipi' )

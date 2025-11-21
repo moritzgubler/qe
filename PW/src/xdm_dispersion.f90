@@ -320,7 +320,7 @@ CONTAINS
     !! runs. In addition, forces and stresses are saved for subsequent calls to \(\texttt{force_xdm}\)
     !! and \(\texttt{stress_xdm}\).
     !
-    USE control_flags, ONLY : lbfgs, lmd
+    USE control_flags, ONLY : lbfgs, lsqnm, lmd
     USE scf,           ONLY : rho, rhoz_or_updw
     USE io_global,     ONLY : stdout, ionode
     USE fft_base,      ONLY : dfftp
@@ -377,7 +377,7 @@ CONTAINS
     IF (nspin == 2) CALL rhoz_or_updw( rho, 'r_and_g', '->updw' )
 
     ! do we need to recalculate the coefficients?
-    docalc = .NOT.saved .OR. .NOT.(lbfgs .OR. lmd)
+    docalc = .NOT.saved .OR. .NOT.(lbfgs .OR. lmd .OR. lsqnm)
 
     ! Set the coefficients if none are given in the input
     ! See: http://schooner.chem.dal.ca/wiki/XDM#Quantum_ESPRESSO

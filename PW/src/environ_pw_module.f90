@@ -16,7 +16,7 @@ MODULE environ_pw_module
     USE io_global, ONLY: stdout, ionode_id
     USE kinds, ONLY: DP
     !
-    USE control_flags, ONLY: lscf, lbfgs, conv_ions, istep, nstep, lforce => tprnfor
+    USE control_flags, ONLY: lscf, lbfgs, lsqnm, conv_ions, istep, nstep, lforce => tprnfor
     !
     USE fft_base, ONLY: dfftp
     !
@@ -150,6 +150,7 @@ CONTAINS
         !
         lforce = .TRUE.
         lbfgs = .FALSE.
+        lsqnm = .FALSE.
         nstep = 100
         tot_charge = 0.0
         !

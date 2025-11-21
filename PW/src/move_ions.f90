@@ -11,6 +11,7 @@ SUBROUTINE move_ions( idone, ions_status, optimizer_failed )
   !! Perform a ionic step, according to the requested scheme:
   !
   !! * lbfgs: bfgs minimizations
+  !! * lsqnm: sqnm minimizations
   !! * lmd: molecular dynamics ( all kinds )
   !
   !! Additional variables affecting the calculation:
@@ -37,7 +38,7 @@ SUBROUTINE move_ions( idone, ions_status, optimizer_failed )
   USE symm_base,              ONLY : checkallsym
   USE ener,                   ONLY : etot, ef
   USE force_mod,              ONLY : force, sigma
-  USE control_flags,          ONLY : istep, nstep, upscale, lbfgs, &
+  USE control_flags,          ONLY : istep, nstep, upscale, lbfgs, lsqnm, &
                                      lconstrain, lmd, tr2, iprint, tnosep
   USE relax,                  ONLY : epse, epsf, epsp, starting_scf_threshold
   USE lsda_mod,               ONLY : lsda, absmag

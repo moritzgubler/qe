@@ -63,7 +63,7 @@ SUBROUTINE setup()
                                  find_sym, inverse_s, no_t_rev, fft_fact,  &
                                  allfrac
   USE wvfct,              ONLY : nbnd, nbndx
-  USE control_flags,      ONLY : tr2, ethr, lscf, lbfgs, lmd, david, lecrpa,  &
+  USE control_flags,      ONLY : tr2, ethr, lscf, lbfgs, lsqnm, lmd, david, lecrpa,  &
                                  isolve, niter, noinv, ts_vdw, tstress, &
                                  lbands, gamma_only, restart, use_spinflip, symm_by_label 
   USE cellmd,             ONLY : calc
@@ -148,7 +148,7 @@ SUBROUTINE setup()
            CALL infomsg ('setup', &
                     'Warning: ecutfock not valid for US/PAW, ignored')
         END IF
-        IF ( lmd .OR. lbfgs ) CALL errore &
+        IF ( lmd .OR. lbfgs .OR. lsqnm) CALL errore &
            ('setup','forces for hybrid functionals + US/PAW not implemented',1)
         IF ( noncolin ) CALL errore &
            ('setup','Noncolinear hybrid XC for USPP not implemented',1)

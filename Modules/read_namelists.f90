@@ -558,6 +558,13 @@ MODULE read_namelists_module
        fire_alpha_init = 0.20_DP ! initial value of mixing factor
        fire_falpha = 0.99_DP ! modification of the mixing factor
        fire_dtmax = 10.0_DP ! factor for calculating dtmax 
+
+       ! sqnm defaults
+       sqnm_initial_step_size = -0.1_DP
+       sqnm_nhist_max = 10
+       sqnm_alpha0 = 0.01_DP
+       sqnm_eps_subspace = 0.001_DP
+
        RETURN
        !
      END SUBROUTINE
@@ -601,6 +608,8 @@ MODULE read_namelists_module
        cell_damping = 0.1_DP
        press_conv_thr = 0.5_DP
        treinit_gvecs = .FALSE.
+       ! sqnm defaults
+       sqnm_lattice_weight = 2.0_DP
        !
        RETURN
        !
@@ -1279,6 +1288,12 @@ MODULE read_namelists_module
        CALL mp_bcast( w_1,              ionode_id, intra_image_comm )
        CALL mp_bcast( w_2,              ionode_id, intra_image_comm )
        !
+       ! sqnm
+       call mp_bcast( sqnm_initial_step_size, ionode_id, intra_image_comm )
+       call mp_bcast( sqnm_nhist_max, ionode_id, intra_image_comm )
+       call mp_bcast( sqnm_alpha0, ionode_id, intra_image_comm )
+       call mp_bcast( sqnm_eps_subspace, ionode_id, intra_image_comm)
+       call mp_bcast( sqnm_lattice_weight, ionode_id, intra_image_comm)
        RETURN
        !
      END SUBROUTINE

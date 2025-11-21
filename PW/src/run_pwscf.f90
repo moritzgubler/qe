@@ -43,7 +43,7 @@ SUBROUTINE run_pwscf( exit_status )
   USE upf_params,           ONLY : lmaxx
   USE cell_base,            ONLY : fix_volume, fix_area
   USE control_flags,        ONLY : conv_elec, gamma_only, ethr, lscf, treinit_gvecs
-  USE control_flags,        ONLY : conv_ions, istep, nstep, restart, lmd, lbfgs,&
+  USE control_flags,        ONLY : conv_ions, istep, nstep, restart, lmd, lbfgs, lsqnm,&
                                    lensemb, lforce=>tprnfor, tstress
   USE cellmd,               ONLY : lmovecell
   USE command_line_options, ONLY : command_line
@@ -234,7 +234,7 @@ SUBROUTINE run_pwscf( exit_status )
      !
      IF ( tstress ) CALL stress( sigma )
      !
-     IF ( lmd .OR. lbfgs ) THEN
+     IF ( lmd .OR. lbfgs .OR. lsqnm ) THEN
         !
         ! ... add information on this ionic step to xml file
         !
@@ -282,7 +282,7 @@ SUBROUTINE run_pwscf( exit_status )
      ! ... terms of the hamiltonian depending upon nuclear positions
      ! ... are reinitialized here
      !
-     IF ( lmd .OR. lbfgs ) THEN
+     IF ( lmd .OR. lbfgs .OR. lsqnm) THEN
         !
         IF ( ions_status == 1 ) THEN
            !

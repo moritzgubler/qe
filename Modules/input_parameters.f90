@@ -1096,11 +1096,11 @@ MODULE input_parameters
 
         CHARACTER(len=80) :: ion_dynamics = 'none'
         !! set how ions should be moved
-        CHARACTER(len=80) :: ion_dynamics_allowed(12)
+        CHARACTER(len=80) :: ion_dynamics_allowed(13)
         !! allowed options for ion\_dynamics.
         DATA ion_dynamics_allowed / 'none', 'sd', 'cg', 'langevin', &
                                     'damp', 'verlet', 'velocity-verlet', 'bfgs', 'beeman',& 
-                                    'langevin-smc', 'ipi', 'fire' /
+                                    'langevin-smc', 'ipi', 'fire', 'sqnm'/
 
         REAL(DP) :: ion_radius(nsx) = 0.5_DP
         !! pseudo-atomic radius of the i-th atomic species (CP only).
@@ -1249,6 +1249,13 @@ MODULE input_parameters
         REAL(DP) :: fire_falpha = 0.99_DP ! modify the mixing factor
         REAL(DP) :: fire_dtmax = 10.0_DP ! maximum time step; calculated as dtmax = fire_dtmax*dt 
         !
+        
+        ! Parameters for SQNM ionic minimization
+        REAL(DP) :: sqnm_initial_step_size = -.1_DP
+        INTEGER  :: sqnm_nhist_max = 10
+        REAL(DP) :: sqnm_alpha0 = 0.01_DP
+        REAL(DP) :: sqnm_eps_subspace = 0.001_DP
+
 
         !
         NAMELIST / ions / ion_dynamics, iesr, ion_radius, ion_damping,         &
@@ -1260,7 +1267,8 @@ MODULE input_parameters
                           trust_radius_max, trust_radius_min,                  &
                           trust_radius_ini, w_1, w_2, bfgs_ndim,tgdiis_step,   &
                           fire_nmin, fire_f_inc, fire_f_dec, fire_alpha_init,  &
-                          fire_falpha, fire_dtmax 
+                          fire_falpha, fire_dtmax, sqnm_initial_step_size,     &
+                          sqnm_nhist_max, sqnm_alpha0, sqnm_eps_subspace
 
 
 
@@ -1277,9 +1285,9 @@ MODULE input_parameters
 
         CHARACTER(len=80) :: cell_dynamics  = 'none'
         !! set how the cell should be moved
-        CHARACTER(len=80) :: cell_dynamics_allowed(8)
+        CHARACTER(len=80) :: cell_dynamics_allowed(9)
         DATA cell_dynamics_allowed / 'sd', 'pr', 'none', 'w', 'damp-pr', &
-                                     'damp-w', 'bfgs', 'ipi'  /
+                                     'damp-w', 'bfgs', 'ipi', 'sqnm' /
 
         CHARACTER(len=80) :: cell_velocities = 'default'
         !! allowed options:  
@@ -1347,10 +1355,13 @@ MODULE input_parameters
         !! if TRUE all the quantities related to fft g vectors are updated at 
         !! step of variable cell structural optimization 
 
+        REAL(DP) :: sqnm_lattice_weight = 2.0_DP
+
         NAMELIST / cell / cell_parameters, cell_dynamics, cell_velocities, &
                           press, wmass, cell_temperature, temph, fnoseh,   &
                           cell_dofree, greash, cell_factor, cell_nstepe,   &
-                          cell_damping, press_conv_thr, treinit_gvecs 
+                          cell_damping, press_conv_thr, treinit_gvecs,     &
+                          sqnm_lattice_weight
 
 !
 !=----------------------------------------------------------------------------=!!

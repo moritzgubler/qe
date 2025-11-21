@@ -14,7 +14,7 @@ SUBROUTINE iosys_fcp()
   !
   USE cell_base,             ONLY : alat, at
   USE constants,             ONLY : RYTOEV
-  USE control_flags,         ONLY : lbfgs, lmd
+  USE control_flags,         ONLY : lbfgs, lsqnm, lmd
   USE fcp_dynamics,          ONLY : fcpdyn_init, fcpdyn_prm_mass, &
                                   & fcpdyn_prm_velocity, fcpdyn_prm_temp
   USE fcp_module,            ONLY : fcp_mu_ => fcp_mu, &

@@ -24,7 +24,7 @@ MODULE sic_mod
    USE mp,               ONLY : mp_sum
    USE electrons_base,   ONLY : set_nelup_neldw
    USE klist,            ONLY : nelec, tot_magnetization, nelup, neldw
-   USE control_flags,    ONLY : use_gpu, lbfgs
+   USE control_flags,    ONLY : use_gpu, lbfgs, lsqnm
    ! 
    IMPLICIT NONE
    SAVE
@@ -59,6 +59,7 @@ MODULE sic_mod
       IF (xclib_dft_is('meta'))     CALL errore('sic_init', 'meta-GGA not implemented',1)
       IF (xclib_dft_is('hybrid'))   CALL errore('sic_init', 'hybrid not implemented',1)
       IF (lbfgs .AND. .NOT. sic_energy) CALL errore('sic_init', 'use damped ion dynamics when sic_energy = .false.',1)
+      IF (lsqnm .AND. .NOT. sic_energy) CALL errore('sic_init', 'use damped ion dynamics when sic_energy = .false.',1)
       IF (pol_type == 'e') THEN
          isp = 1
          fp = 1

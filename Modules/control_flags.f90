@@ -161,6 +161,7 @@ MODULE control_flags
   LOGICAL, PUBLIC :: &
     lscf    =.FALSE., &! if .TRUE. the calc. is selfconsistent
     lbfgs   =.FALSE., &! if .TRUE. the calc. is a relaxation based on BFGS
+    lsqnm   =.FALSE., &! if .TRUE. the calc. is a relaxation based on SQNM
     lmd     =.FALSE., &! if .TRUE. the calc. is a dynamics
     lwf     =.FALSE., &! if .TRUE. the calc. is with wannier functions
     !=================================================================

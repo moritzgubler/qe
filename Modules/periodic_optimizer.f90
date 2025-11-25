@@ -47,6 +47,9 @@ private :: invertalat_lattice_per_opt
     procedure :: close_optimizer
   end type optimizer_periodic
 
+  type(optimizer_periodic) :: vcsqnm_opt
+  !! this optimizer can be used if static access to an optimizer object is required
+
 contains
   
   subroutine initialize_optimizer(t, nat, init_lat, initial_step_size, nhist_max &

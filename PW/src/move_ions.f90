@@ -61,6 +61,9 @@ SUBROUTINE move_ions( idone, ions_status, optimizer_failed )
   USE rism_module,            ONLY : lrism, rism_new_conv_thr
   USE printout_base,          ONLY : printout_base_open, printout_base_close, &
                                      printout_cell, printout_pos, printout_stress
+
+  USE periodic_optimizer,     ONLY: initialize_optimizer, close_optimizer, optimizer_step, &
+      get_lower_energy_bound, optimizer_periodic, vcsqnm_opt
   !
   IMPLICIT NONE
   !
@@ -81,6 +84,8 @@ SUBROUTINE move_ions( idone, ions_status, optimizer_failed )
   CHARACTER(LEN=320)    :: filebfgs
   INTEGER               :: iunit
   INTEGER               :: nose_cycle
+  real(DP) :: lattice_vectors(3,3), pos_copy(3, nat), force_copy(3, nat)
+  real(DP) :: stress_plus_pressure(3, 3)
   !
   optimizer_failed = .FALSE.
   !
@@ -267,6 +272,123 @@ SUBROUTINE move_ions( idone, ions_status, optimizer_failed )
         END IF
         !
      ENDIF bfgs_minimization
+
+     sqnm_minimization : &
+     IF ( lsqnm ) THEN
+        at_old = at
+        omega_old = omega
+        etot = etot + press * omega
+        CALL cell_force( fcell, - transpose(bg)/alat, sigma, omega, press )
+        fcell = -fcell ! vcsqnm expectns negative cell gradient
+        epsp1 = epsp / ry_kbar
+
+        lattice_vectors = at * alat
+        
+        if ( istep == 0 ) then ! initialize optimizer
+          CALL vcsqnm_opt%initialize_optimizer( nat, lattice_vectors, -1.d0, 10, 2.0d0, 0.01d0, 1.d-4)
+        end if
+
+
+        stress_plus_pressure = sigma
+        stress_plus_pressure(1, 1) = stress_plus_pressure(1, 1) - press
+        stress_plus_pressure(2, 2) = stress_plus_pressure(2, 2) - press
+        stress_plus_pressure(3, 3) = stress_plus_pressure(3, 3) - press
+        cell_error = maxval(abs(stress_plus_pressure))
+        gradient_error = maxval(abs(force))
+        
+        pos_copy = tau * alat
+        force_copy = force
+
+        IF (istep > 0) THEN
+          energy_error = etot - vcsqnm_opt%sqnm_opt%prev_f
+          conv_ions = energy_error < epse
+        ELSE
+         conv_ions = .FALSE.
+        ENDIF
+
+        if (ions_status == 3) then
+         call optimizer_step( vcsqnm_opt, pos_copy, lattice_vectors, etot, force_copy, fcell )
+        endif
+
+        tau = pos_copy / alat
+        at = lattice_vectors / alat
+        CALL recips( at(1,1),at(1,2),at(1,3), bg(1,1),bg(1,2),bg(1,3) )
+        CALL volume( alat, at(1,1),at(1,2),at(1,3), omega )
+        epsp1 = epsp / ry_kbar
+        conv_ions = conv_ions .AND. gradient_error < epsf
+        conv_ions = conv_ions .AND. cell_error < epsp1
+        IF ( conv_ions ) THEN
+           !
+           IF ( ions_status == 3 ) THEN
+              !
+              IF ( lsda .AND. absmag < eps6 ) THEN
+                 !
+                 ! ... a final configuration with zero absolute magnetization
+                 ! ... has been found - do check with nonzero magnetization
+                 !
+                 ions_status = 2
+                 !
+              ELSEIF ( lmovecell ) THEN
+                 !
+                 ! ... Variable-cell relaxation converged with starting cell
+                 ! ... Do final calculation with G-vectors for relaxed cell
+                 !
+                 ions_status = 1
+                 !
+              ELSE
+                 !
+                 ! ... Fixed-cell relaxation converged, prepare to exit
+                 !
+                 ions_status = 0
+                 !
+              ENDIF
+              !
+           ELSEIF ( ions_status == 2 ) THEN
+              !
+              ! ... check with nonzero magnetization succeeded, see above
+              !
+              IF ( lmovecell ) THEN
+                 ions_status = 1
+              ELSE
+                 ions_status = 0
+              ENDIF
+              !
+           ELSEIF ( ions_status == 1 ) THEN
+              !
+              ions_status = 0
+              !
+           ENDIF
+           !
+           IF ( ions_status < 2 ) THEN
+              !
+               ! CALL terminate_bfgs ( etot, epse, epsf, epsp, fcp_eps, &
+               !                         lmovecell, lfcp, optimizer_failed )
+               call vcsqnm_opt%close_optimizer()
+              !
+           END IF
+           !
+        ELSEIF ( idone == nstep ) THEN
+           !
+         !   CALL terminate_bfgs( etot, epse, epsf, epsp, fcp_eps, &
+         !                        lmovecell, lfcp, optimizer_failed )
+            call vcsqnm_opt%close_optimizer()
+           !
+        ELSE
+           !
+           IF ( tr2 > 1.D-10 ) THEN
+              WRITE( stdout, &
+                     '(5X,"new conv_thr",T30,"= ",0PF18.10," Ry",/)' ) tr2
+           ELSE
+              WRITE( stdout, &
+                     '(5X,"new conv_thr",T30,"= ",1PE18.1 ," Ry",/)' ) tr2
+           ENDIF
+           !
+        ENDIF
+
+        CALL output_tau( lmovecell, conv_ions )
+        istep = istep + 1
+     ENDIF sqnm_minimization
+
      !
      IF ( lmd ) THEN
         !

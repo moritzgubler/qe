@@ -497,7 +497,7 @@ SUBROUTINE control_iosys()
         !
      CASE( 'sqnm')
          !
-         lsqnm = .true.
+        call errore('control_iosys', "sqnm can only be used for vc-relax simulations", 1) 
          !
      CASE ( 'damp' )
         !

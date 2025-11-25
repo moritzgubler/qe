@@ -39,7 +39,7 @@ SUBROUTINE forces()
   USE extfield,          ONLY : tefield, forcefield, gate, forcegate, relaxz
   USE control_flags,     ONLY : gamma_only, remove_rigid_rot, textfor, &
                                 iverbosity, llondon, ldftd3, lxdm, ts_vdw, &
-                                mbd_vdw, lforce => tprnfor, istep
+                                mbd_vdw, lforce => tprnfor, istep, lsqnm
   USE bp,                ONLY : lelfield, gdir, l3dstring, efield_cart, &
                                 efield_cry,efield
   USE uspp,              ONLY : okvan
@@ -305,7 +305,7 @@ SUBROUTINE forces()
                                             - sumfor / DBLE( nat )
         ENDDO
         !
-     ELSEIF ( qmmm_mode < 0 ) THEN
+     ELSEIF ( qmmm_mode < 0 .and. .not. lsqnm ) THEN ! if vcrelax with sqnm is performed, don't remove translational component of forces
         !
         ! ... impose total force = 0 except in a QM-MM calculation
         !

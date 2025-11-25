@@ -24,7 +24,7 @@ SUBROUTINE stress( sigma )
   USE noncollin_module, ONLY : domag
   USE scf,              ONLY : rho, rho_core, rhog_core
   USE control_flags,    ONLY : iverbosity, gamma_only, llondon, ldftd3, lxdm, &
-                               ts_vdw, mbd_vdw
+                               ts_vdw, mbd_vdw, lsqnm
   USE xc_lib,           ONLY : xclib_dft_is
   USE symme,            ONLY : symmatrix
   USE bp,               ONLY : lelfield
@@ -215,8 +215,7 @@ SUBROUTINE stress( sigma )
   ENDIF
   ! ... Resymmetrize the total stress. This should not be strictly necessary,
   !     but prevents loss of symmetry in long vc-bfgs runs
-
-  CALL symmatrix( sigma )
+  if (.not. lsqnm) CALL symmatrix( sigma )
   !
   ! ... write results in Ry/(a.u.)^3 and in kbar
   !

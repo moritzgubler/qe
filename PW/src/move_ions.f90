@@ -64,6 +64,7 @@ SUBROUTINE move_ions( idone, ions_status, optimizer_failed )
 
   USE periodic_optimizer,     ONLY: initialize_optimizer, close_optimizer, optimizer_step, &
       get_lower_energy_bound, optimizer_periodic, vcsqnm_opt
+  USE input_parameters,       ONLY: sqnm_initial_step_size, sqnm_alpha0, sqnm_eps_subspace, sqnm_lattice_weight, sqnm_nhist_max
   !
   IMPLICIT NONE
   !
@@ -86,6 +87,8 @@ SUBROUTINE move_ions( idone, ions_status, optimizer_failed )
   INTEGER               :: nose_cycle
   real(DP) :: lattice_vectors(3,3), pos_copy(3, nat), force_copy(3, nat)
   real(DP) :: stress_plus_pressure(3, 3)
+  integer :: iosqnm
+  logical :: sqnmdebug = .true.
   !
   optimizer_failed = .FALSE.
   !
@@ -275,6 +278,18 @@ SUBROUTINE move_ions( idone, ions_status, optimizer_failed )
 
      sqnm_minimization : &
      IF ( lsqnm ) THEN
+        if (lfcp) then
+         call errore("move_ions", "fcp not supported in vc-relax with sqnm", 1)
+        endif
+        if (fix_area) THEN
+         call errore("move_ions", "fix_area not supported in vc-relax with sqnm",1)
+        endif
+        if (fix_volume) THEN
+         call errore("move_ions", "fix_volume not supported in vc-relax with sqnm", 1)
+        endif
+        if (enforce_ibrav) then
+         call errore("move_ions", "enforce_ibrav not supported in vc-relax with sqnm", 1)
+        endif
         at_old = at
         omega_old = omega
         etot = etot + press * omega
@@ -285,7 +300,8 @@ SUBROUTINE move_ions( idone, ions_status, optimizer_failed )
         lattice_vectors = at * alat
         
         if ( istep == 0 ) then ! initialize optimizer
-          CALL vcsqnm_opt%initialize_optimizer( nat, lattice_vectors, -1.d0, 10, 2.0d0, 0.01d0, 1.d-4)
+          CALL vcsqnm_opt%initialize_optimizer( nat, lattice_vectors, sqnm_initial_step_size &
+            , sqnm_nhist_max, sqnm_lattice_weight, sqnm_alpha0, sqnm_eps_subspace)
         end if
 
 
@@ -303,6 +319,7 @@ SUBROUTINE move_ions( idone, ions_status, optimizer_failed )
           energy_error = etot - vcsqnm_opt%sqnm_opt%prev_f
           conv_ions = energy_error < epse
         ELSE
+         energy_error = 0.d0
          conv_ions = .FALSE.
         ENDIF
 
@@ -317,6 +334,22 @@ SUBROUTINE move_ions( idone, ions_status, optimizer_failed )
         epsp1 = epsp / ry_kbar
         conv_ions = conv_ions .AND. gradient_error < epsf
         conv_ions = conv_ions .AND. cell_error < epsp1
+        conv_ions = conv_ions .or. ions_status < 3
+        sqnmdebug = .true.
+        if (sqnmdebug) then
+         if (ions_status == 3) then
+            if (istep == 0) then
+               open(newunit=iosqnm, file=trim(tmp_dir) // trim(prefix) // "vcsqnm.txt", status="replace", action="write")
+            else
+               open(newunit=iosqnm, file=trim(tmp_dir) // trim(prefix) // "vcsqnm.txt", status="unknown", position="append", action="write")
+            endif
+            write(iosqnm, *) istep, etot, energy_error, gradient_error, cell_error &
+               , vcsqnm_opt%sqnm_opt%alpha, vcsqnm_opt%sqnm_opt%gainratio &
+               , vcsqnm_opt%f_sdt_deviation, vcsqnm_opt%get_lower_energy_bound(), vcsqnm_opt%sqnm_opt%nhist
+            flush(iosqnm)
+            close(iosqnm)
+         endif
+        endif
         IF ( conv_ions ) THEN
            !
            IF ( ions_status == 3 ) THEN
@@ -375,6 +408,10 @@ SUBROUTINE move_ions( idone, ions_status, optimizer_failed )
            !
         ELSE
            !
+              tr2  = starting_scf_threshold * &
+                     MIN( 1.D0, ( energy_error / ( epse * upscale ) ), &
+                                ( gradient_error / ( epsf * upscale ) ) )
+              tr2  = MAX( ( starting_scf_threshold / upscale ), tr2 ) 
            IF ( tr2 > 1.D-10 ) THEN
               WRITE( stdout, &
                      '(5X,"new conv_thr",T30,"= ",0PF18.10," Ry",/)' ) tr2

@@ -560,9 +560,9 @@ MODULE read_namelists_module
        fire_dtmax = 10.0_DP ! factor for calculating dtmax 
 
        ! sqnm defaults
-       sqnm_initial_step_size = -0.1_DP
-       sqnm_nhist_max = 10
-       sqnm_alpha0 = 0.01_DP
+       sqnm_initial_step_size = -0.05_DP
+       sqnm_nhist_max = 15
+       sqnm_alpha0 = 0.005_DP
        sqnm_eps_subspace = 0.001_DP
 
        RETURN

@@ -341,11 +341,13 @@ SUBROUTINE move_ions( idone, ions_status, optimizer_failed )
             if (istep == 0) then
                open(newunit=iosqnm, file=trim(tmp_dir) // trim(prefix) // "vcsqnm.txt", status="replace", action="write")
             else
-               open(newunit=iosqnm, file=trim(tmp_dir) // trim(prefix) // "vcsqnm.txt", status="unknown", position="append", action="write")
+               open(newunit=iosqnm, file=trim(tmp_dir) // trim(prefix) // "vcsqnm.txt" &
+                  , status="unknown", position="append", action="write")
             endif
             write(iosqnm, *) istep, etot, energy_error, gradient_error, cell_error &
                , vcsqnm_opt%sqnm_opt%alpha, vcsqnm_opt%sqnm_opt%gainratio &
-               , vcsqnm_opt%f_sdt_deviation, vcsqnm_opt%get_lower_energy_bound(), vcsqnm_opt%sqnm_opt%nhist
+               , vcsqnm_opt%f_sdt_deviation, vcsqnm_opt%get_lower_energy_bound()& 
+               , vcsqnm_opt%sqnm_opt%nhist
             flush(iosqnm)
             close(iosqnm)
          endif

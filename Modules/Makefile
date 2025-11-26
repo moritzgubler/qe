@@ -83,6 +83,7 @@ copy_order_um_from_xml.o \
 setqf.o \
 timestep.o\
 tsvdw.o\
+vcsqnm.o\
 mbdlib.o\
 version.o \
 wannier_gw.o\

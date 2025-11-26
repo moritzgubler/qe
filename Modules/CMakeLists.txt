@@ -178,10 +178,7 @@ set(src_modules
     write_rism_type.f90
     xml_io_rism.f90
     # vc sqnm optimizer modules
-    sqnm_module.f90
-    historylist.f90
-    periodic_optimizer.f90
-    sqnm.f90
+    vcsqnm.f90
     # subroutines and functions (not modules) previously found in flib
     atom_weight.f90 
     capital.f90 

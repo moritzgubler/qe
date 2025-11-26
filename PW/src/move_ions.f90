@@ -62,7 +62,7 @@ SUBROUTINE move_ions( idone, ions_status, optimizer_failed )
   USE printout_base,          ONLY : printout_base_open, printout_base_close, &
                                      printout_cell, printout_pos, printout_stress
 
-  USE periodic_optimizer,     ONLY: initialize_optimizer, close_optimizer, optimizer_step, &
+  USE vcsqnm,     ONLY: initialize_optimizer, close_optimizer, optimizer_step, &
       get_lower_energy_bound, optimizer_periodic, vcsqnm_opt
   USE input_parameters,       ONLY: sqnm_initial_step_size, sqnm_alpha0, sqnm_eps_subspace, sqnm_lattice_weight, sqnm_nhist_max
   !

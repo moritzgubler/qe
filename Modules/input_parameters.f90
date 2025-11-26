@@ -1252,7 +1252,7 @@ MODULE input_parameters
         
         ! Parameters for SQNM ionic minimization
         REAL(DP) :: sqnm_initial_step_size = -.05_DP
-        INTEGER  :: sqnm_nhist_max = 15
+        INTEGER  :: sqnm_nhist_max = 10
         REAL(DP) :: sqnm_alpha0 = 0.005_DP
         REAL(DP) :: sqnm_eps_subspace = 0.001_DP
 

@@ -561,7 +561,7 @@ MODULE read_namelists_module
 
        ! sqnm defaults
        sqnm_initial_step_size = -0.05_DP
-       sqnm_nhist_max = 15
+       sqnm_nhist_max = 10
        sqnm_alpha0 = 0.005_DP
        sqnm_eps_subspace = 0.001_DP
 

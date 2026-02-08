@@ -39,6 +39,11 @@ Dense matrix diagonalization (full matrix construction and LAPACK solve).
 - `rotate_HSpsi_gamma.f90`, `rotate_HSpsi_k.f90` - Subspace rotation
 - `rotate_wfc_gamma.f90`, `rotate_wfc_k.f90` - Wavefunction rotation
 
+### JacobiDavidson (`JacobiDavidson/`)
+Jacobi-Davidson eigensolver. Processes one eigenvalue at a time with explicit deflation and a TPA (diagonal) preconditioner.
+- `rjdsym.f90` - Real (gamma-point) Jacobi-Davidson
+- `cjdsym.f90` - Complex (k-point) Jacobi-Davidson
+
 ### Davidson_RCI (`Davidson_RCI/`)
 Reverse Communication Interface for Davidson.
 - `david_rci.f90` - RCI-based Davidson solver
@@ -47,7 +52,7 @@ Reverse Communication Interface for Davidson.
 - `ks_solver_interfaces.h` - C interface header
 
 ## Solver Selection
-The solver is selected at runtime via `pw.x` input (`diagonalization` keyword): `'david'`, `'cg'`, `'rmm-davidson'`, `'rmm-paro'`, `'ppcg'`.
+The solver is selected at runtime via `pw.x` input (`diagonalization` keyword): `'david'`, `'cg'`, `'rmm-davidson'`, `'rmm-paro'`, `'ppcg'`, `'jd'`.
 
 ## Dependencies
 - LAXlib (matrix operations)

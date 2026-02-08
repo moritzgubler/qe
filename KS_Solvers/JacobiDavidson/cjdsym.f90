@@ -104,6 +104,8 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, &
     ! real part of dot product
   COMPLEX(DP) :: cdot
     ! complex dot product
+  LOGICAL :: lprint
+    ! if .TRUE. print debug information
   !
   ! ... debug variables
   !
@@ -117,6 +119,7 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, &
     !     calculates S|psi> (if needed)
   !
   nhpsi = 0
+  lprint = .FALSE.
   CALL start_clock( 'cjdsym' )
   !
   IF ( nvec > nvecx / 2 ) CALL errore( 'cjdsym', 'nvecx is too small', 1 )
@@ -144,14 +147,16 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, &
   !
   ! ... Debug: print parameters
   !
-  WRITE(6, '(5X,"cjdsym: npw=",I8," npwx=",I8," nvec=",I4,' // &
-       '" nvecx=",I4," npol=",I2)') npw, npwx, nvec, nvecx, npol
-  WRITE(6, '(5X,"cjdsym: ethr=",ES10.3," tol=",ES10.3,' // &
-       '" empty_ethr=",ES10.3," uspp=",L2)') ethr, tol, empty_ethr, uspp
-  WRITE(6, '(5X,"cjdsym: jmin=",I4," maxter=",I6,' // &
-       '" default_shift=",F6.2)') jmin, maxter, default_shift
-  WRITE(6, '(5X,"cjdsym: btype(1:nvec)=",20I2)') btype(1:nvec)
-  FLUSH(6)
+  IF ( lprint ) THEN
+     WRITE(6, '(5X,"cjdsym: npw=",I8," npwx=",I8," nvec=",I4,' // &
+          '" nvecx=",I4," npol=",I2)') npw, npwx, nvec, nvecx, npol
+     WRITE(6, '(5X,"cjdsym: ethr=",ES10.3," tol=",ES10.3,' // &
+          '" empty_ethr=",ES10.3," uspp=",L2)') ethr, tol, empty_ethr, uspp
+     WRITE(6, '(5X,"cjdsym: jmin=",I4," maxter=",I6,' // &
+          '" default_shift=",F6.2)') jmin, maxter, default_shift
+     WRITE(6, '(5X,"cjdsym: btype(1:nvec)=",20I2)') btype(1:nvec)
+     FLUSH(6)
+  END IF
   !
   ! ... Allocate search space and projected matrices
   !
@@ -225,7 +230,7 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, &
      nr = SQRT( nr )
      IF ( nr > 1.0D-14 ) THEN
         V(1:kdim,i) = V(1:kdim,i) / nr
-     ELSE
+     ELSE IF ( lprint ) THEN
         WRITE(6, '(5X,"cjdsym WARNING: initial vector ",I4,' // &
              '" has near-zero norm after orthogonalization: ",ES10.3)') i, nr
      END IF
@@ -277,17 +282,19 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, &
   !
   ! ... Debug: check initial overlap matrix diagonal
   !
-  sc_diag_min = REAL( sc(1,1) )
-  sc_diag_max = REAL( sc(1,1) )
-  DO i = 1, j
-     IF ( REAL( sc(i,i) ) < sc_diag_min ) sc_diag_min = REAL( sc(i,i) )
-     IF ( REAL( sc(i,i) ) > sc_diag_max ) sc_diag_max = REAL( sc(i,i) )
-  END DO
-  WRITE(6, '(5X,"cjdsym: initial sc diag range: [",F12.8,",",F12.8,"]")') &
-       sc_diag_min, sc_diag_max
-  WRITE(6, '(5X,"cjdsym: initial hc diag(1:min(5,j)): ",5F12.6)') &
-       (REAL(hc(i,i)), i=1, MIN(5,j))
-  FLUSH(6)
+  IF ( lprint ) THEN
+     sc_diag_min = REAL( sc(1,1) )
+     sc_diag_max = REAL( sc(1,1) )
+     DO i = 1, j
+        IF ( REAL( sc(i,i) ) < sc_diag_min ) sc_diag_min = REAL( sc(i,i) )
+        IF ( REAL( sc(i,i) ) > sc_diag_max ) sc_diag_max = REAL( sc(i,i) )
+     END DO
+     WRITE(6, '(5X,"cjdsym: initial sc diag range: [",F12.8,",",F12.8,"]")') &
+          sc_diag_min, sc_diag_max
+     WRITE(6, '(5X,"cjdsym: initial hc diag(1:min(5,j)): ",5F12.6)') &
+          (REAL(hc(i,i)), i=1, MIN(5,j))
+     FLUSH(6)
+  END IF
   !
   ! ... Initialize eigenvalue estimates
   !
@@ -297,8 +304,10 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, &
   ! ... Main Jacobi-Davidson loop
   ! ====================================================================
   !
-  WRITE(6, '(5X,"cjdsym: entering main loop, initial subspace dim j=",I4)') j
-  FLUSH(6)
+  IF ( lprint ) THEN
+     WRITE(6, '(5X,"cjdsym: entering main loop, initial subspace dim j=",I4)') j
+     FLUSH(6)
+  END IF
   !
   iterate: DO iter = 1, maxter
      !
@@ -364,9 +373,12 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, &
      CALL mp_sum( nr, intra_bgrp_comm )
      nr = SQRT( nr )
      !
+     WRITE(6, '(5X,"cjdsym: iter=",I4," band=",I4," |r|=",ES10.3)') &
+          iter, nconv+1, nr
+     !
      ! ... Debug: iteration summary
      !
-     IF ( MOD(iter, 1) == 0 .OR. iter <= 10 ) THEN
+     IF ( lprint .AND. ( MOD(iter, 1) == 0 .OR. iter <= 10 ) ) THEN
         WRITE(6, '(5X,"cjdsym it=",I4," nconv=",I3," j=",I3,' // &
              '" theta=",F14.8," |r|=",ES10.3," tol=",ES10.3)') &
              iter, nconv, j, ew(1), nr, tol
@@ -388,9 +400,11 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, &
            evc(1:npwx*npol, nconv) = u(1:npwx*npol)
            e(nconv) = ew(1)
            !
-           WRITE(6, '(5X,"cjdsym >>> band ",I4," CONVERGED: e=",F14.8,' // &
-                '" |r|=",ES10.3," at iter ",I4)') nconv, ew(1), nr, iter
-           FLUSH(6)
+           IF ( lprint ) THEN
+              WRITE(6, '(5X,"cjdsym >>> band ",I4," CONVERGED: e=",F14.8,' // &
+                   '" |r|=",ES10.3," at iter ",I4)') nconv, ew(1), nr, iter
+              FLUSH(6)
+           END IF
            !
            IF ( nconv >= nvec ) EXIT iterate
            !
@@ -426,16 +440,20 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, &
                  sc(i,i) = ONE
               END DO
               !
-              WRITE(6, '(5X,"cjdsym: deflated, new subspace dim j=",I4)') j
-              FLUSH(6)
+              IF ( lprint ) THEN
+                 WRITE(6, '(5X,"cjdsym: deflated, new subspace dim j=",I4)') j
+                 FLUSH(6)
+              END IF
               !
            ELSE
               !
               ! ... Subspace empty after deflation, reinitialize
               ! ... Use a random vector orthogonal to converged eigenvectors
               !
-              WRITE(6, '(5X,"cjdsym: subspace empty, reinitializing")')
-              FLUSH(6)
+              IF ( lprint ) THEN
+                 WRITE(6, '(5X,"cjdsym: subspace empty, reinitializing")')
+                 FLUSH(6)
+              END IF
               CALL cjd_reinit_subspace()
               !
            END IF
@@ -451,9 +469,11 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, &
            evc(1:npwx*npol, nconv) = u(1:npwx*npol)
            e(nconv) = ew(1)
            !
-           WRITE(6, '(5X,"cjdsym >>> empty band ",I4," CONVERGED: e=",F14.8,' // &
-                '" |r|=",ES10.3," at iter ",I4)') nconv, ew(1), nr, iter
-           FLUSH(6)
+           IF ( lprint ) THEN
+              WRITE(6, '(5X,"cjdsym >>> empty band ",I4," CONVERGED: e=",F14.8,' // &
+                   '" |r|=",ES10.3," at iter ",I4)') nconv, ew(1), nr, iter
+              FLUSH(6)
+           END IF
            !
            IF ( nconv >= nvec ) EXIT iterate
            !
@@ -480,11 +500,15 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, &
                  sc(i,i) = ONE
               END DO
               !
-              WRITE(6, '(5X,"cjdsym: deflated (empty), new subspace dim j=",I4)') j
-              FLUSH(6)
+              IF ( lprint ) THEN
+                 WRITE(6, '(5X,"cjdsym: deflated (empty), new subspace dim j=",I4)') j
+                 FLUSH(6)
+              END IF
            ELSE
-              WRITE(6, '(5X,"cjdsym: subspace empty (empty band), reinitializing")')
-              FLUSH(6)
+              IF ( lprint ) THEN
+                 WRITE(6, '(5X,"cjdsym: subspace empty (empty band), reinitializing")')
+                 FLUSH(6)
+              END IF
               CALL cjd_reinit_subspace()
            END IF
            !
@@ -501,8 +525,10 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, &
         ! ... Keep best jmin Ritz vectors
         ! ... (all j eigenvectors were computed by diaghg above)
         !
-        WRITE(6, '(5X,"cjdsym: RESTART j=",I4," -> jmin=",I4)') j, jmin
-        FLUSH(6)
+        IF ( lprint ) THEN
+           WRITE(6, '(5X,"cjdsym: RESTART j=",I4," -> jmin=",I4)') j, jmin
+           FLUSH(6)
+        END IF
         !
         CALL ZGEMM( 'N', 'N', kdim, jmin, j, ONE, V, kdmx, &
                     vc(1,1), nvecx, ZERO, Vtmp, kdmx )
@@ -603,9 +629,11 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, &
      CALL stop_clock( 'cjdsym:ortho' )
      !
      IF ( nt < 1.0D-14 ) THEN
-        WRITE(6, '(5X,"cjdsym: correction too small, |t|=",ES10.3,' // &
-             '" skipping")') nt
-        FLUSH(6)
+        IF ( lprint ) THEN
+           WRITE(6, '(5X,"cjdsym: correction too small, |t|=",ES10.3,' // &
+                '" skipping")') nt
+           FLUSH(6)
+        END IF
         CYCLE iterate    ! correction too small, skip
      END IF
      !
@@ -667,13 +695,15 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, &
   !
   notcnv = nvec - nconv
   !
-  WRITE(6, '(5X,"cjdsym: finished. nconv=",I4," notcnv=",I4,' // &
-       '" iter=",I4," nhpsi=",I6)') nconv, notcnv, jd_iter, nhpsi
-  IF ( nconv > 0 ) THEN
-     WRITE(6, '(5X,"cjdsym: converged eigenvalues: ",8F12.6)') &
-          (e(i), i=1, nconv)
+  IF ( lprint ) THEN
+     WRITE(6, '(5X,"cjdsym: finished. nconv=",I4," notcnv=",I4,' // &
+          '" iter=",I4," nhpsi=",I6)') nconv, notcnv, jd_iter, nhpsi
+     IF ( nconv > 0 ) THEN
+        WRITE(6, '(5X,"cjdsym: converged eigenvalues: ",8F12.6)') &
+             (e(i), i=1, nconv)
+     END IF
+     FLUSH(6)
   END IF
-  FLUSH(6)
   !
   ! ... For any remaining unconverged eigenvalues, use best Ritz approximation
   !
@@ -688,10 +718,11 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, &
      DO i = j + 1, notcnv
         e(nconv+i) = ew(MIN(i,j))
      END DO
-     WRITE(6, '(5X,"cjdsym: unconverged Ritz values: ",8F12.6)') &
-          (e(nconv+i), i=1, MIN(notcnv, 8))
+     IF ( lprint ) THEN
+        WRITE(6, '(5X,"cjdsym: unconverged Ritz values: ",8F12.6)') &
+             (e(nconv+i), i=1, MIN(notcnv, 8))
+     END IF
   END IF
-  FLUSH(6)
   !
   ! ... Deallocate
   !
@@ -777,9 +808,11 @@ CONTAINS
     CALL mp_sum( sc(1:1, 1:1), intra_bgrp_comm )
     sc(1,1) = CMPLX( REAL( sc(1,1) ), 0.0_DP, kind=DP )
     !
-    WRITE(6, '(5X,"cjdsym: reinit done, hc(1,1)=",F14.8," sc(1,1)=",F14.8)') &
-         REAL(hc(1,1)), REAL(sc(1,1))
-    FLUSH(6)
+    IF ( lprint ) THEN
+       WRITE(6, '(5X,"cjdsym: reinit done, hc(1,1)=",F14.8," sc(1,1)=",F14.8)') &
+            REAL(hc(1,1)), REAL(sc(1,1))
+       FLUSH(6)
+    END IF
     !
   END SUBROUTINE cjd_reinit_subspace
   !

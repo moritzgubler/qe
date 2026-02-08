@@ -83,7 +83,9 @@ SUBROUTINE c_bands( iter )
       WRITE( stdout, '(5X,"ParO style diagonalization")')
      ELSE 
        WRITE( stdout, '(5X,"RMM-DIIS diagonalization")')
-     END IF 
+     END IF
+  ELSEIF ( isolve == 5 ) THEN
+     WRITE( stdout, '(5X,"Jacobi-Davidson diagonalization")')
   ELSE
      CALL errore ( 'c_bands', 'invalid type of diagonalization', isolve)
   ENDIF
@@ -479,6 +481,26 @@ SUBROUTINE diag_bands( iter, ik, avg_iter )
           NULLIFY( sevc )
        END IF
        !
+    ELSE IF ( isolve == 5 ) THEN
+       !
+       ! ... Jacobi-Davidson diagonalization
+       !
+       ntry = 0
+       !
+       jd_loop_g: DO
+          !
+          CALL rjdsym( h_psi, s_psi, okvan, &
+                       npw, npwx, nbnd, nbndx, evc, ethr, &
+                       g2kin(1), et(1,ik), btype(1,ik), notconv, dav_iter, nhpsi )
+          !
+          avg_iter = avg_iter + dav_iter
+          !
+          ntry = ntry + 1
+          !
+          IF ( test_exit_cond() ) EXIT jd_loop_g
+          !
+       ENDDO jd_loop_g
+       !
     ELSE
        !
        ! ... Davidson diagonalization
@@ -711,6 +733,26 @@ SUBROUTINE diag_bands( iter, ik, avg_iter )
        ELSE
           NULLIFY( sevc )
        END IF
+       !
+    ELSE IF ( isolve == 5 ) THEN
+       !
+       ! ... Jacobi-Davidson diagonalization
+       !
+       ntry = 0
+       !
+       jd_loop_k: DO
+          !
+          CALL cjdsym( h_psi, s_psi, okvan, &
+                       npw, npwx, nbnd, nbndx, npol, evc, ethr, &
+                       g2kin(1), et(1,ik), btype(1,ik), notconv, dav_iter, nhpsi )
+          !
+          avg_iter = avg_iter + dav_iter
+          !
+          ntry = ntry + 1
+          !
+          IF ( test_exit_cond() ) EXIT jd_loop_k
+          !
+       ENDDO jd_loop_k
        !
     ELSE
        !

@@ -461,8 +461,9 @@ SUBROUTINE setup()
   ! ... set the max number of bands used in iterative diagonalization
   !
   nbndx = nbnd
-  IF ( isolve == 0  ) nbndx = david * nbnd 
-  IF (isolve == 4 ) nbndx = 2 *nbnd 
+  IF ( isolve == 0  ) nbndx = david * nbnd
+  IF ( isolve == 4 ) nbndx = 2 * nbnd
+  IF ( isolve == 5 ) nbndx = 2 * nbnd
   !
   ! ... Set the units in real and reciprocal space
   !

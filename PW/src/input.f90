@@ -986,7 +986,11 @@ SUBROUTINE control_iosys()
      rmm_ndim = diago_rmm_ndim 
      rmm_conv = diago_rmm_conv 
      gs_nblock = diago_gs_nblock 
-     rmm_with_davidson = .FALSE.  
+     rmm_with_davidson = .FALSE.
+  CASE ( 'jd', 'JD', 'jacobi-davidson', 'Jacobi-Davidson' )
+     !
+     isolve = 5
+     !
   CASE DEFAULT
      !
      CALL errore( 'iosys', 'diagonalization ' // &

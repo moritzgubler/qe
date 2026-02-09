@@ -22,7 +22,7 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, &
   ! ... S is an overlap matrix, evc is a complex vector.
   !
   ! ... Processes one eigenvalue at a time with explicit deflation.
-  ! ... Uses TPA preconditioner with constant shift: t = r / (g2kin + 1).
+  ! ... Uses TPA preconditioner: t = r / (g2kin - theta).
   !
   USE util_param,    ONLY : DP
   USE mp_bands_util, ONLY : intra_bgrp_comm, inter_bgrp_comm, root_bgrp_id, &
@@ -62,7 +62,7 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, &
   INTEGER, PARAMETER :: maxter = 200
     ! maximum number of iterations
   REAL(DP), PARAMETER :: default_shift = 1.0_DP
-    ! TPA default shift for preconditioner
+    ! minimum denominator for preconditioner
   !
   INTEGER :: j, nconv, iter, kdim, kdmx, ierr, jmin
     ! current subspace dimension
@@ -142,7 +142,7 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, &
   !
   ! ... jmin for restart: keep at least this many vectors
   !
-  jmin = MAX( 5, nvec / 2 )
+  jmin = MAX( npw, nvec + 5 )
   IF ( jmin > nvecx / 2 ) jmin = nvecx / 2
   !
   ! ... Debug: print parameters
@@ -373,8 +373,8 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, &
      CALL mp_sum( nr, intra_bgrp_comm )
      nr = SQRT( nr )
      !
-     WRITE(6, '(5X,"cjdsym: iter=",I4," band=",I4," |r|=",ES10.3)') &
-          iter, nconv+1, nr
+   !   WRITE(6, '(5X,"cjdsym: iter=",I4," band=",I4," |r|=",ES10.3)') &
+         !  iter, nconv+1, nr
      !
      ! ... Debug: iteration summary
      !
@@ -566,13 +566,13 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, &
      !
      CALL start_clock( 'cjdsym:correction' )
      !
-     ! ... Apply TPA preconditioner with constant shift: t = r / (g2kin + 1)
+     ! ... Apply TPA preconditioner: t = r / (g2kin - theta)
      !
      t = ZERO
      DO ipol = 1, npol
         DO ig = 1, npw
-           t(ig + (ipol-1)*npwx) = r(ig + (ipol-1)*npwx) / &
-                                   ( g2kin(ig) + default_shift )
+         t(ig + (ipol-1)*npwx) = r(ig + (ipol-1)*npwx) / (g2kin(ig) + default_shift)
+         ! t(ig + (ipol-1)*npwx) = r(ig + (ipol-1)*npwx) / (g2kin(ig) - ew(1) + default_shift)
         END DO
      END DO
      !
@@ -695,15 +695,15 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, &
   !
   notcnv = nvec - nconv
   !
-  IF ( lprint ) THEN
+!   IF ( lprint ) THEN
      WRITE(6, '(5X,"cjdsym: finished. nconv=",I4," notcnv=",I4,' // &
           '" iter=",I4," nhpsi=",I6)') nconv, notcnv, jd_iter, nhpsi
-     IF ( nconv > 0 ) THEN
-        WRITE(6, '(5X,"cjdsym: converged eigenvalues: ",8F12.6)') &
-             (e(i), i=1, nconv)
-     END IF
+   !   IF ( nconv > 0 ) THEN
+      !   WRITE(6, '(5X,"cjdsym: converged eigenvalues: ",8F12.6)') &
+            !  (e(i), i=1, nconv)
+   !   END IF
      FLUSH(6)
-  END IF
+!   END IF
   !
   ! ... For any remaining unconverged eigenvalues, use best Ritz approximation
   !

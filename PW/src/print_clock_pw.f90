@@ -116,6 +116,8 @@ SUBROUTINE print_clock_pw()
       CALL print_clock( 'rrmmdiagg' )  ; CALL print_clock( 'crmmdiagg' )
       CALL print_clock( 'wfcrot' )
       CALL print_clock( 'gsorth' )
+   ELSE IF ( isolve == 5 ) THEN
+      CALL print_clock( 'rjdsym' )     ; CALL print_clock( 'cjdsym' )
    ENDIF
    !
    IF ( iverbosity > 0)  THEN
@@ -193,6 +195,20 @@ SUBROUTINE print_clock_pw()
       END IF
    ELSE IF ( isolve == 4 ) THEN
       WRITE( stdout, '(/5x,"Called by *rmmdiagg:")' )
+   ELSE IF ( isolve == 5 ) THEN
+      WRITE( stdout, '(/5x,"Called by *jdsym:")' )
+      CALL print_clock( 'cjdsym:diag' )
+      CALL print_clock( 'rjdsym:diag' )
+      IF ( iverbosity > 0 ) THEN
+         CALL print_clock( 'cjdsym:correction' )
+         CALL print_clock( 'cjdsym:ortho' )
+         CALL print_clock( 'cjdsym:overlap' )
+         CALL print_clock( 'cjdsym:restart' )
+         CALL print_clock( 'rjdsym:correction' )
+         CALL print_clock( 'rjdsym:ortho' )
+         CALL print_clock( 'rjdsym:overlap' )
+         CALL print_clock( 'rjdsym:restart' )
+      END IF
    END IF
    !
    CALL print_clock( 'h_psi' )

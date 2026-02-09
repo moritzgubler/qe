@@ -9,7 +9,7 @@
 #define ONE  ( 1.D0, 0.D0 )
 !
 !----------------------------------------------------------------------------
-SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, &
+SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, g_psi_ptr, &
                    npw, npwx, nvec, nvecx, npol, evc, ethr, &
                    g2kin, e, btype, notcnv, jd_iter, nhpsi )
   !----------------------------------------------------------------------------
@@ -22,7 +22,7 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, &
   ! ... S is an overlap matrix, evc is a complex vector.
   !
   ! ... Processes one eigenvalue at a time with explicit deflation.
-  ! ... Uses TPA preconditioner: t = r / (g2kin + default_shift).
+  ! ... Preconditioner: g_psi_ptr (use_g_psi=T) or TPA t=r/(g2kin+shift) (use_g_psi=F).
   !
   USE util_param,    ONLY : DP
   USE mp_bands_util, ONLY : intra_bgrp_comm, inter_bgrp_comm, root_bgrp_id, &
@@ -62,7 +62,9 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, &
   INTEGER, PARAMETER :: maxter = 400
     ! maximum number of iterations
   REAL(DP), PARAMETER :: default_shift = 1.0_DP
-    ! minimum denominator for preconditioner
+    ! minimum denominator for TPA preconditioner
+  LOGICAL, PARAMETER :: use_g_psi = .true.
+    ! .TRUE. = use g_psi_ptr, .FALSE. = use TPA preconditioner
   !
   INTEGER :: j, nconv, iter, kdim, kdmx, ierr, jmin
   INTEGER :: i, ig, ipol
@@ -83,11 +85,13 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, &
   COMPLEX(DP), ALLOCATABLE :: Vtmp(:,:), Wtmp(:,:), SWtmp(:,:)
     ! temporary arrays for restart/deflation
   !
-  EXTERNAL  h_psi_ptr, s_psi_ptr
+  EXTERNAL  h_psi_ptr, s_psi_ptr, g_psi_ptr
     ! h_psi_ptr(npwx,npw,nvec,psi,hpsi)
     !     calculates H|psi>
     ! s_psi_ptr(npwx,npw,nvec,psi,spsi)
     !     calculates S|psi> (if needed)
+    ! g_psi_ptr(npwx,npw,notcnv,npol,psi,e)
+    !     calculates (diag(h)-e)^-1 * psi, diagonal approx. to (h-e)^-1*psi
   !
   nhpsi = 0
   lprint = .FALSE.
@@ -537,21 +541,31 @@ CONTAINS
     !-----------------------------------------------------------------------
     !
     ! ... Solve the correction equation (simplified Jacobi-Davidson):
-    ! ... Apply TPA preconditioner t = r / (g2kin + shift), then
-    ! ... project out converged eigenvectors and the current Ritz vector.
+    ! ... Apply preconditioner to residual, then project out converged
+    ! ... eigenvectors and the current Ritz vector.
     !
     IMPLICIT NONE
+    REAL(DP) :: e_tmp(1)
     !
     CALL start_clock( 'cjdsym:correction' )
     !
-    ! ... Apply TPA preconditioner
+    ! ... Apply preconditioner
     !
-    t = ZERO
-    DO ipol = 1, npol
-       DO ig = 1, npw
-        t(ig + (ipol-1)*npwx) = r(ig + (ipol-1)*npwx) / (g2kin(ig) + default_shift)
+    !
+    IF ( use_g_psi ) THEN
+       ! ... Use g_psi_ptr: diagonal approx. to (H-e)^{-1}
+       e_tmp(1) = ew(1)
+       t(1:npwx*npol) = r(1:npwx*npol)
+       CALL g_psi_ptr( npwx, npw, 1, npol, t, ew(1) )
+    ELSE
+       ! ... TPA preconditioner: t = r / (g2kin + shift)
+       t = ZERO
+       DO ipol = 1, npol
+          DO ig = 1, npw
+           t(ig + (ipol-1)*npwx) = r(ig + (ipol-1)*npwx) / (g2kin(ig) + default_shift - ew(1))
+          END DO
        END DO
-    END DO
+    END IF
     !
     ! ... Project out converged eigenvectors (double for stability)
     !

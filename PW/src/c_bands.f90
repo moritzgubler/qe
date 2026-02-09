@@ -738,11 +738,17 @@ SUBROUTINE diag_bands( iter, ik, avg_iter )
        !
        ! ... Jacobi-Davidson diagonalization
        !
+       ! ... h_diag are the diagonal matrix elements of the
+       ! ... hamiltonian used in g_psi to evaluate the correction
+       ! ... to the trial eigenvectors
+       !
+       CALL usnldiag( npw, npol, h_diag, s_diag )
+       !
        ntry = 0
        !
        jd_loop_k: DO
           !
-          CALL cjdsym( h_psi, s_psi, okvan, &
+          CALL cjdsym( h_psi, s_psi, okvan, g_psi, &
                        npw, npwx, nbnd, nbndx, npol, evc, ethr, &
                        g2kin(1), et(1,ik), btype(1,ik), notconv, dav_iter, nhpsi )
           !

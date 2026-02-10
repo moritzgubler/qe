@@ -748,9 +748,11 @@ SUBROUTINE diag_bands( iter, ik, avg_iter )
        !
        jd_loop_k: DO
           !
+          lrot = ( iter == 1 )
+          !
           CALL cjdsym( h_psi, s_psi, okvan, g_psi, &
                        npw, npwx, nbnd, nbndx, npol, evc, ethr, &
-                       g2kin(1), et(1,ik), btype(1,ik), notconv, dav_iter, nhpsi )
+                       g2kin(1), et(1,ik), btype(1,ik), notconv, lrot, dav_iter, nhpsi )
           !
           avg_iter = avg_iter + dav_iter
           !

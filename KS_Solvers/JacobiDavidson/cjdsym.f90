@@ -11,7 +11,7 @@
 !----------------------------------------------------------------------------
 SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, g_psi_ptr, &
                    npw, npwx, nvec, nvecx, npol, evc, ethr, &
-                   g2kin, e, btype, notcnv, jd_iter, nhpsi )
+                   g2kin, e, btype, notcnv, lrot, jd_iter, nhpsi )
   !----------------------------------------------------------------------------
   !
   ! ... Blocked Jacobi-Davidson iterative diagonalization:
@@ -35,6 +35,7 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, g_psi_ptr, &
   COMPLEX(DP), INTENT(INOUT) :: evc(npwx*npol,nvec)
   REAL(DP), INTENT(IN) :: ethr
   LOGICAL, INTENT(IN) :: uspp
+  LOGICAL, INTENT(IN) :: lrot
   REAL(DP), INTENT(IN) :: g2kin(npwx)
   INTEGER, INTENT(IN) :: btype(nvec)
   REAL(DP), INTENT(OUT) :: e(nvec)
@@ -133,7 +134,19 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, g_psi_ptr, &
   !
   CALL cjd_init_subspace()
   !
-  e = 0.0_DP
+  IF ( lrot ) THEN
+     !
+     ! ... Wavefunctions already rotated: skip first diaghg, use vc = I
+     !
+     vc = ZERO
+     DO i = 1, j
+        e(i) = REAL( hc(i,i) )
+        vc(i,i) = ONE
+     END DO
+     ew(1:j) = e(1:j)
+  ELSE
+     e = 0.0_DP
+  END IF
   !
   ! ====================================================================
   ! ... Main blocked Jacobi-Davidson loop
@@ -146,7 +159,11 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, g_psi_ptr, &
      ! ... Diagonalize projected problem (must be done before restart
      ! ... so that vc is fresh and matches current j)
      !
-     CALL cjd_diag_projected()
+     IF ( iter == 1 .AND. lrot ) THEN
+        ! ... Already set vc = I and e = diag(hc) above, skip diaghg
+     ELSE
+        CALL cjd_diag_projected()
+     END IF
      !
      ! ... Block size for this iteration
      !

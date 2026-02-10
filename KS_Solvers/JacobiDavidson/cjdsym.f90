@@ -53,7 +53,7 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, g_psi_ptr, &
   INTEGER :: i, ig, ipol, ib, nb, nact, nconv_new, k
   REAL(DP) :: tol, empty_ethr, norm_t
   LOGICAL :: lprint
-  REAL(DP) :: rnorms(nvec)
+  REAL(DP), allocatable :: rnorms(:)
   !
   COMPLEX(DP), ALLOCATABLE :: V(:,:), W(:,:), SW(:,:)
     ! search space basis vectors / H * V / S * V
@@ -77,6 +77,8 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, g_psi_ptr, &
     !     calculates (diag(h)-e)^-1 * psi, diagonal approx. to (h-e)^-1*psi
   !
   nblock = nvec
+  allocate(rnorms(nblock))
+
   nhpsi = 0
   lprint = .FALSE.
   CALL start_clock( 'cjdsym' )
@@ -96,8 +98,7 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, g_psi_ptr, &
      kdmx = npwx*npol
   END IF
   !
-  jmin = MAX( npw, nvec + 5 )
-  IF ( jmin > nvecx / 2 ) jmin = nvecx / 2
+  jmin = nvec
   !
   ! ... Allocate workspace
   !
@@ -258,6 +259,7 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, g_psi_ptr, &
   !
   ! ... Deallocate
   !
+  deallocate(rnorms)
   IF ( uspp ) DEALLOCATE( SWtmp )
   DEALLOCATE( Wtmp, Vtmp )
   DEALLOCATE( work2d )
@@ -283,6 +285,8 @@ CONTAINS
     !
     IMPLICIT NONE
     !
+    CALL start_clock( 'cjdsym:init' )
+    !
     nconv = 0
     j = nvec
     hc = ZERO
@@ -290,51 +294,28 @@ CONTAINS
     vc = ZERO
     ew = 0.0_DP
     !
-    V(:,:) = ZERO
-    W(:,:) = ZERO
     V(1:npwx*npol, 1:nvec) = evc(1:npwx*npol, 1:nvec)
     !
-    ! ... Orthogonalize initial search space (modified Gram-Schmidt)
+    ! ... Zero padding
     !
-    DO i = 1, nvec
-       !
-       IF ( i > 1 ) THEN
-          CALL ZGEMV( 'C', kdim, i-1, ONE, V, kdmx, V(1,i), 1, ZERO, work2d(1,1), 1 )
-          CALL mp_sum( work2d(1:i-1,1), intra_bgrp_comm )
-          CALL ZGEMV( 'N', kdim, i-1, -ONE, V, kdmx, work2d(1,1), 1, ONE, V(1,i), 1 )
-          ! ... Repeat for numerical stability
-          CALL ZGEMV( 'C', kdim, i-1, ONE, V, kdmx, V(1,i), 1, ZERO, work2d(1,1), 1 )
-          CALL mp_sum( work2d(1:i-1,1), intra_bgrp_comm )
-          CALL ZGEMV( 'N', kdim, i-1, -ONE, V, kdmx, work2d(1,1), 1, ONE, V(1,i), 1 )
-       END IF
-       !
-       norm_t = 0.0_DP
-       DO ig = 1, kdim
-          norm_t = norm_t + DBLE( CONJG(V(ig,i)) * V(ig,i) )
+    IF ( npol == 1 .AND. npw < npwx ) THEN
+       DO i = 1, nvec
+          V(npw+1:npwx,i) = ZERO
        END DO
-       CALL mp_sum( norm_t, intra_bgrp_comm )
-       norm_t = SQRT( norm_t )
-       IF ( norm_t > 1.0D-14 ) THEN
-          V(1:kdim,i) = V(1:kdim,i) / norm_t
-       END IF
-       !
-       IF ( npol == 1 .AND. npw < npwx ) V(npw+1:npwx,i) = ZERO
-       IF ( npol == 2 .AND. npw < npwx ) THEN
+    END IF
+    IF ( npol == 2 .AND. npw < npwx ) THEN
+       DO i = 1, nvec
           V(npw+1:npwx,i) = ZERO
           V(npwx+npw+1:2*npwx,i) = ZERO
-       END IF
-       !
-    END DO
+       END DO
+    END IF
     !
     ! ... Compute H*V and S*V for initial vectors
     !
     CALL h_psi_ptr( npwx, npw, nvec, V, W )
     nhpsi = nhpsi + nvec
     !
-    IF ( uspp ) THEN
-       SW(:,:) = ZERO
-       CALL s_psi_ptr( npwx, npw, nvec, V, SW )
-    END IF
+    IF ( uspp ) CALL s_psi_ptr( npwx, npw, nvec, V, SW )
     !
     ! ... Build projected Hamiltonian hc = V^H * W
     !
@@ -361,6 +342,8 @@ CONTAINS
        END DO
     END DO
     !
+    CALL stop_clock( 'cjdsym:init' )
+    !
   END SUBROUTINE cjd_init_subspace
   !
   !-----------------------------------------------------------------------
@@ -373,7 +356,7 @@ CONTAINS
     !
     CALL start_clock( 'cjdsym:diag' )
     IF ( my_bgrp_id == root_bgrp_id ) THEN
-       CALL diaghg( j, j, hc, sc, nvecx, ew, vc, &
+       CALL diaghg( j, MIN(j, nvec), hc, sc, nvecx, ew, vc, &
                     me_bgrp, root_bgrp, intra_bgrp_comm )
     END IF
     IF ( nbgrp > 1 ) THEN
@@ -393,6 +376,8 @@ CONTAINS
     !
     IMPLICIT NONE
     INTEGER, INTENT(IN) :: nb_in
+    !
+    CALL start_clock( 'cjdsym:residual' )
     !
     ! ... Compute Ritz vectors: ub(:,1:nb) = V * vc(:,1:nb)
     !
@@ -441,6 +426,8 @@ CONTAINS
     CALL mp_sum( rnorms(1:nb_in), intra_bgrp_comm )
     rnorms(1:nb_in) = SQRT( rnorms(1:nb_in) )
     !
+    CALL stop_clock( 'cjdsym:residual' )
+    !
   END SUBROUTINE cjd_compute_residuals_block
   !
   !-----------------------------------------------------------------------
@@ -456,7 +443,7 @@ CONTAINS
     !
     IF ( j > nrem ) THEN
        !
-       jnew = j - nrem
+       jnew = MIN( j - nrem, nvec - nrem )
        !
        CALL ZGEMM( 'N', 'N', kdim, jnew, j, ONE, V, kdmx, &
                    vc(1,nrem+1), nvecx, ZERO, Vtmp, kdmx )
@@ -592,31 +579,27 @@ CONTAINS
     !
     CALL start_clock( 'cjdsym:ortho' )
     !
+    ! ... Normalize correction vectors and add to V.
+    ! ... No explicit orthogonalization needed: the projected overlap sc
+    ! ... captures all overlaps, and diaghg solves the generalized
+    ! ... eigenvalue problem (same approach as Davidson/cegterg).
+    !
+    ! ... Batch-compute all norms with a single mp_sum
+    !
+    DO ib = 1, nb_in
+       rnorms(ib) = 0.0_DP
+       DO ig = 1, kdim
+          rnorms(ib) = rnorms(ib) + DBLE( CONJG(rb(ig,ib)) * rb(ig,ib) )
+       END DO
+    END DO
+    CALL mp_sum( rnorms(1:nb_in), intra_bgrp_comm )
+    !
     nact = 0
     !
     DO ib = 1, nb_in
        !
-       ! ... Orthogonalize rb(:,ib) against V(:,1:j+nact) (double Gram-Schmidt)
-       ! ... This includes previously accepted corrections in V(:,j+1:j+nact)
-       !
-       DO i = 1, 2
-          CALL ZGEMV( 'C', kdim, j+nact, ONE, V, kdmx, rb(1,ib), 1, &
-                      ZERO, work2d(1,1), 1 )
-          CALL mp_sum( work2d(1:j+nact,1), intra_bgrp_comm )
-          CALL ZGEMV( 'N', kdim, j+nact, -ONE, V, kdmx, work2d(1,1), 1, &
-                      ONE, rb(1,ib), 1 )
-       END DO
-       !
-       ! ... Normalize
-       !
-       norm_t = 0.0_DP
-       DO ig = 1, kdim
-          norm_t = norm_t + DBLE( CONJG(rb(ig,ib)) * rb(ig,ib) )
-       END DO
-       CALL mp_sum( norm_t, intra_bgrp_comm )
-       norm_t = SQRT( norm_t )
-       !
-       IF ( norm_t < 1.0D-14 ) CYCLE  ! skip this correction
+       norm_t = SQRT( rnorms(ib) )
+       IF ( norm_t < 1.0D-14 ) CYCLE
        !
        rb(1:kdim,ib) = rb(1:kdim,ib) / norm_t
        !

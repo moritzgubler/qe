@@ -43,8 +43,8 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, g_psi_ptr, &
   !
   ! ... LOCAL variables
   !
-  INTEGER, PARAMETER :: maxter = 400
-  INTEGER, parameter :: nblock = 16
+  INTEGER, PARAMETER :: maxter = 20
+  INTEGER :: nblock
     ! number of correction vectors per iteration
   REAL(DP), PARAMETER :: default_shift = 1.0_DP
   LOGICAL, PARAMETER :: use_g_psi = .TRUE.
@@ -53,7 +53,7 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, g_psi_ptr, &
   INTEGER :: i, ig, ipol, ib, nb, nact, nconv_new, k
   REAL(DP) :: tol, empty_ethr, norm_t
   LOGICAL :: lprint
-  REAL(DP) :: rnorms(nblock)
+  REAL(DP) :: rnorms(nvec)
   !
   COMPLEX(DP), ALLOCATABLE :: V(:,:), W(:,:), SW(:,:)
     ! search space basis vectors / H * V / S * V
@@ -76,7 +76,7 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, g_psi_ptr, &
     ! g_psi_ptr(npwx,npw,notcnv,npol,psi,e)
     !     calculates (diag(h)-e)^-1 * psi, diagonal approx. to (h-e)^-1*psi
   !
-!   nblock = 8
+  nblock = nvec
   nhpsi = 0
   lprint = .FALSE.
   CALL start_clock( 'cjdsym' )
@@ -210,11 +210,22 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, g_psi_ptr, &
         IF ( nconv >= nvec ) EXIT iterate
         !
         CALL cjd_deflate_block( nconv_new )
-        CYCLE iterate
+        !
+        ! ... Use remaining unconverged residuals instead of wasting an iteration
+        !
+        nb = nb - nconv_new
+        IF ( nb > 0 ) THEN
+           DO ib = 1, nb
+              rb(1:npwx*npol, ib) = rb(1:npwx*npol, nconv_new + ib)
+              ew(ib) = ew(nconv_new + ib)
+           END DO
+        ELSE
+           CYCLE iterate
+        END IF
         !
      END IF
      !
-     ! ... No convergence - solve nb correction equations
+     ! ... Solve nb correction equations
      !
      CALL cjd_solve_corrections_block( nb )
      !

@@ -176,8 +176,6 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, g_psi_ptr, &
         CALL cjd_restart()
         nb = MIN( nblock, nvec - nconv, j, nvecx - j )
         IF ( nb < 1 ) nb = 1
-        ! ... Re-diag so vc matches the restarted (smaller) j
-        CALL cjd_diag_projected()
      END IF
      !
      ! ... Compute Ritz pairs and residuals for nb lowest
@@ -478,13 +476,15 @@ CONTAINS
        !
        j = jnew
        !
-       ! ... After rotation by eigenvectors: hc = diag(ew(nrem+1:)), sc = I
+       ! ... After rotation by eigenvectors: hc = diag(ew(nrem+1:)), sc = I, vc = I
        !
        hc = ZERO
        sc = ZERO
+       vc = ZERO
        DO i = 1, j
           hc(i,i) = CMPLX( ew(nrem+i), 0.0_DP, kind=DP )
           sc(i,i) = ONE
+          vc(i,i) = ONE
        END DO
        !
     ELSE
@@ -528,9 +528,11 @@ CONTAINS
     !
     hc = ZERO
     sc = ZERO
+    vc = ZERO
     DO i = 1, j
        hc(i,i) = CMPLX( ew(i), 0.0_DP, kind=DP )
        sc(i,i) = ONE
+       vc(i,i) = ONE
     END DO
     !
     CALL stop_clock( 'cjdsym:restart' )

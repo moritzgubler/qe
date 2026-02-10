@@ -14,15 +14,13 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, g_psi_ptr, &
                    g2kin, e, btype, notcnv, jd_iter, nhpsi )
   !----------------------------------------------------------------------------
   !
-  ! ... Jacobi-Davidson iterative diagonalization of the eigenvalue problem:
+  ! ... Blocked Jacobi-Davidson iterative diagonalization:
   !
   ! ... ( H - e S ) * evc = 0
   !
-  ! ... where H is a Hermitian operator, e is a real scalar,
-  ! ... S is an overlap matrix, evc is a complex vector.
-  !
-  ! ... Processes one eigenvalue at a time with explicit deflation.
-  ! ... Preconditioner: g_psi_ptr (use_g_psi=T) or TPA t=r/(g2kin+shift) (use_g_psi=F).
+  ! ... In each iteration, nblock correction vectors are computed and
+  ! ... added to the search space for better BLAS3 utilization.
+  ! ... Preconditioner: g_psi_ptr (use_g_psi=T) or TPA (use_g_psi=F).
   !
   USE util_param,    ONLY : DP
   USE mp_bands_util, ONLY : intra_bgrp_comm, inter_bgrp_comm, root_bgrp_id, &
@@ -34,44 +32,28 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, g_psi_ptr, &
   include 'laxlib.fh'
   !
   INTEGER, INTENT(IN) :: npw, npwx, nvec, nvecx, npol
-    ! dimension of the matrix to be diagonalized
-    ! leading dimension of matrix evc, as declared in the calling pgm unit
-    ! integer number of searched low-lying roots
-    ! maximum dimension of the reduced basis set
-    ! number of spin polarizations
   COMPLEX(DP), INTENT(INOUT) :: evc(npwx*npol,nvec)
-    !  evc contains the refined estimates of the eigenvectors
   REAL(DP), INTENT(IN) :: ethr
-    ! energy threshold for convergence
   LOGICAL, INTENT(IN) :: uspp
-    ! if .FALSE. : do not calculate S|psi>
   REAL(DP), INTENT(IN) :: g2kin(npwx)
-    ! kinetic energy of each G-vector, used for preconditioning
   INTEGER, INTENT(IN) :: btype(nvec)
-    ! band type ( 1 = occupied, 0 = empty )
   REAL(DP), INTENT(OUT) :: e(nvec)
-    ! contains the estimated roots.
   INTEGER, INTENT(OUT) :: jd_iter, notcnv
-    ! integer number of iterations performed
-    ! number of unconverged roots
   INTEGER, INTENT(OUT) :: nhpsi
-    ! total number of individual hpsi
   !
   ! ... LOCAL variables
   !
   INTEGER, PARAMETER :: maxter = 400
-    ! maximum number of iterations
+  INTEGER, parameter :: nblock = 16
+    ! number of correction vectors per iteration
   REAL(DP), PARAMETER :: default_shift = 1.0_DP
-    ! minimum denominator for TPA preconditioner
-  LOGICAL, PARAMETER :: use_g_psi = .true.
-    ! .TRUE. = use g_psi_ptr, .FALSE. = use TPA preconditioner
+  LOGICAL, PARAMETER :: use_g_psi = .TRUE.
   !
   INTEGER :: j, nconv, iter, kdim, kdmx, ierr, jmin
-  INTEGER :: i, ig, ipol
-  REAL(DP) :: nr, nt, tol, empty_ethr
-  COMPLEX(DP) :: coeff_u, cdot
-  REAL(DP) :: rdot
-  LOGICAL :: lprint, skip
+  INTEGER :: i, ig, ipol, ib, nb, nact, nconv_new, k
+  REAL(DP) :: tol, empty_ethr, norm_t
+  LOGICAL :: lprint
+  REAL(DP) :: rnorms(nblock)
   !
   COMPLEX(DP), ALLOCATABLE :: V(:,:), W(:,:), SW(:,:)
     ! search space basis vectors / H * V / S * V
@@ -79,9 +61,10 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, g_psi_ptr, &
     ! projected Hamiltonian / overlap / eigenvectors
   REAL(DP), ALLOCATABLE :: ew(:)
     ! eigenvalues of the reduced hamiltonian
-  COMPLEX(DP), ALLOCATABLE :: u(:), Au(:), Su(:), r(:), t(:)
-    ! Ritz vector / H*u / S*u / residual / correction
-  COMPLEX(DP), ALLOCATABLE :: work(:)
+  COMPLEX(DP), ALLOCATABLE :: ub(:,:), rb(:,:), tb(:,:)
+    ! Ritz vectors / residuals (then corrections) / scratch
+  COMPLEX(DP), ALLOCATABLE :: work2d(:,:)
+    ! workspace for projections
   COMPLEX(DP), ALLOCATABLE :: Vtmp(:,:), Wtmp(:,:), SWtmp(:,:)
     ! temporary arrays for restart/deflation
   !
@@ -93,14 +76,17 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, g_psi_ptr, &
     ! g_psi_ptr(npwx,npw,notcnv,npol,psi,e)
     !     calculates (diag(h)-e)^-1 * psi, diagonal approx. to (h-e)^-1*psi
   !
+!   nblock = 8
   nhpsi = 0
   lprint = .FALSE.
   CALL start_clock( 'cjdsym' )
   !
   IF ( nvec > nvecx / 2 ) CALL errore( 'cjdsym', 'nvecx is too small', 1 )
+
+  print*, npw, npwx, nvec, nvecx
   !
-  empty_ethr = MAX( ( ethr * 5.D0 ), 1.D-5 )
-  tol = ethr
+  empty_ethr = sqrt(MAX( ( ethr * 5.D0 ), 1.D-5 ))
+  tol = sqrt(ethr)
   !
   IF ( npol == 1 ) THEN
      kdim = npw
@@ -112,17 +98,6 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, g_psi_ptr, &
   !
   jmin = MAX( npw, nvec + 5 )
   IF ( jmin > nvecx / 2 ) jmin = nvecx / 2
-  !
-  IF ( lprint ) THEN
-     WRITE(6, '(5X,"cjdsym: npw=",I8," npwx=",I8," nvec=",I4,' // &
-          '" nvecx=",I4," npol=",I2)') npw, npwx, nvec, nvecx, npol
-     WRITE(6, '(5X,"cjdsym: ethr=",ES10.3," tol=",ES10.3,' // &
-          '" empty_ethr=",ES10.3," uspp=",L2)') ethr, tol, empty_ethr, uspp
-     WRITE(6, '(5X,"cjdsym: jmin=",I4," maxter=",I6,' // &
-          '" default_shift=",F6.2)') jmin, maxter, default_shift
-     WRITE(6, '(5X,"cjdsym: btype(1:nvec)=",20I2)') btype(1:nvec)
-     FLUSH(6)
-  END IF
   !
   ! ... Allocate workspace
   !
@@ -145,9 +120,10 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, g_psi_ptr, &
   ALLOCATE( ew( nvecx ), STAT=ierr )
   IF( ierr /= 0 ) CALL errore( 'cjdsym', 'cannot allocate ew', ABS(ierr) )
   !
-  ALLOCATE( u( npwx*npol ), Au( npwx*npol ), Su( npwx*npol ) )
-  ALLOCATE( r( npwx*npol ), t( npwx*npol ) )
-  ALLOCATE( work( nvecx ) )
+  ALLOCATE( ub( npwx*npol, nblock ) )
+  ALLOCATE( rb( npwx*npol, nblock ) )
+  ALLOCATE( tb( npwx*npol, nblock ) )
+  ALLOCATE( work2d( nvecx, nblock ) )
   ALLOCATE( Vtmp( npwx*npol, nvecx ) )
   ALLOCATE( Wtmp( npwx*npol, nvecx ) )
   IF ( uspp ) ALLOCATE( SWtmp( npwx*npol, nvecx ) )
@@ -159,56 +135,92 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, g_psi_ptr, &
   e = 0.0_DP
   !
   ! ====================================================================
-  ! ... Main Jacobi-Davidson loop
+  ! ... Main blocked Jacobi-Davidson loop
   ! ====================================================================
-  !
-  IF ( lprint ) THEN
-     WRITE(6, '(5X,"cjdsym: entering main loop, initial subspace dim j=",I4)') j
-     FLUSH(6)
-  END IF
   !
   iterate: DO iter = 1, maxter
      !
      jd_iter = iter
      !
-     ! ... Diagonalize projected problem and extract best Ritz pair
+     ! ... Diagonalize projected problem (must be done before restart
+     ! ... so that vc is fresh and matches current j)
      !
-     CALL cjd_extract_ritz_pair( nr )
+     CALL cjd_diag_projected()
      !
-     ! ... Check convergence (relaxed threshold for empty bands)
+     ! ... Block size for this iteration
      !
-     IF ( ( btype(nconv+1) == 1 .AND. nr < tol ) .OR. &
-          ( btype(nconv+1) /= 1 .AND. nr < empty_ethr ) ) THEN
-        !
-        nconv = nconv + 1
-        evc(1:npwx*npol, nconv) = u(1:npwx*npol)
-        e(nconv) = ew(1)
-        !
-        IF ( lprint ) THEN
-           WRITE(6, '(5X,"cjdsym >>> band ",I4," CONVERGED: e=",F14.8,' // &
-                '" |r|=",ES10.3," at iter ",I4)') nconv, ew(1), nr, iter
-           FLUSH(6)
+     nb = MIN( nblock, nvec - nconv, j )
+     IF ( nb < 1 ) nb = 1
+     !
+     ! ... Restart if not enough room for nb new vectors
+     !
+     IF ( j + nb > nvecx ) THEN
+        CALL cjd_restart()
+        nb = MIN( nblock, nvec - nconv, j, nvecx - j )
+        IF ( nb < 1 ) nb = 1
+        ! ... Re-diag so vc matches the restarted (smaller) j
+        CALL cjd_diag_projected()
+     END IF
+     !
+     ! ... Compute Ritz pairs and residuals for nb lowest
+     !
+     CALL cjd_compute_residuals_block( nb )
+     !
+     ! ... Check convergence (consecutive from pair 1)
+     !
+     nconv_new = 0
+     DO ib = 1, nb
+        IF ( btype(nconv+ib) == 1 ) THEN
+           IF ( rnorms(ib) < tol ) THEN
+              nconv_new = nconv_new + 1
+           ELSE
+              EXIT
+           END IF
+        ELSE
+           IF ( rnorms(ib) < empty_ethr ) THEN
+              nconv_new = nconv_new + 1
+           ELSE
+              EXIT
+           END IF
         END IF
+     END DO
+     !
+     IF ( lprint ) THEN
+        WRITE(6, '(5X,"cjdsym it=",I4," nconv=",I3," j=",I3,' // &
+             '" nb=",I2," rnorms=",4ES10.3)') &
+             iter, nconv, j, nb, (rnorms(ib), ib=1, MIN(nb,4))
+        FLUSH(6)
+     END IF
+     !
+     ! ... Store converged eigenpairs and deflate
+     !
+     IF ( nconv_new > 0 ) THEN
+        !
+        DO ib = 1, nconv_new
+           nconv = nconv + 1
+           evc(1:npwx*npol, nconv) = ub(1:npwx*npol, ib)
+           e(nconv) = ew(ib)
+           IF ( lprint ) THEN
+              WRITE(6, '(5X,"cjdsym >>> band ",I4," CONVERGED: e=",F14.8,' // &
+                   '" |r|=",ES10.3," at iter ",I4)') nconv, ew(ib), rnorms(ib), iter
+              FLUSH(6)
+           END IF
+        END DO
         !
         IF ( nconv >= nvec ) EXIT iterate
         !
-        CALL cjd_deflate()
+        CALL cjd_deflate_block( nconv_new )
         CYCLE iterate
         !
      END IF
      !
-     ! ... Restart if subspace is full
+     ! ... No convergence - solve nb correction equations
      !
-     IF ( j >= nvecx ) CALL cjd_restart()
+     CALL cjd_solve_corrections_block( nb )
      !
-     ! ... Solve correction equation
+     ! ... Expand subspace with correction vectors
      !
-     CALL cjd_solve_correction()
-     !
-     ! ... Expand subspace with correction vector
-     !
-     CALL cjd_expand_subspace( skip )
-     IF ( skip ) CYCLE iterate
+     CALL cjd_expand_subspace_block( nb )
      !
   END DO iterate
   !
@@ -231,19 +243,14 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, g_psi_ptr, &
      DO i = j + 1, notcnv
         e(nconv+i) = ew(MIN(i,j))
      END DO
-     IF ( lprint ) THEN
-        WRITE(6, '(5X,"cjdsym: unconverged Ritz values: ",8F12.6)') &
-             (e(nconv+i), i=1, MIN(notcnv, 8))
-     END IF
   END IF
   !
   ! ... Deallocate
   !
   IF ( uspp ) DEALLOCATE( SWtmp )
-  DEALLOCATE( Wtmp )
-  DEALLOCATE( Vtmp )
-  DEALLOCATE( work )
-  DEALLOCATE( t, r, Su, Au, u )
+  DEALLOCATE( Wtmp, Vtmp )
+  DEALLOCATE( work2d )
+  DEALLOCATE( tb, rb, ub )
   DEALLOCATE( ew )
   DEALLOCATE( vc, sc, hc )
   IF ( uspp ) DEALLOCATE( SW )
@@ -264,7 +271,6 @@ CONTAINS
     ! ... and build the projected Hamiltonian and overlap matrices.
     !
     IMPLICIT NONE
-    INTEGER :: k
     !
     nconv = 0
     j = nvec
@@ -282,26 +288,23 @@ CONTAINS
     DO i = 1, nvec
        !
        IF ( i > 1 ) THEN
-          CALL ZGEMV( 'C', kdim, i-1, ONE, V, kdmx, V(1,i), 1, ZERO, work, 1 )
-          CALL mp_sum( work(1:i-1), intra_bgrp_comm )
-          CALL ZGEMV( 'N', kdim, i-1, -ONE, V, kdmx, work, 1, ONE, V(1,i), 1 )
+          CALL ZGEMV( 'C', kdim, i-1, ONE, V, kdmx, V(1,i), 1, ZERO, work2d(1,1), 1 )
+          CALL mp_sum( work2d(1:i-1,1), intra_bgrp_comm )
+          CALL ZGEMV( 'N', kdim, i-1, -ONE, V, kdmx, work2d(1,1), 1, ONE, V(1,i), 1 )
           ! ... Repeat for numerical stability
-          CALL ZGEMV( 'C', kdim, i-1, ONE, V, kdmx, V(1,i), 1, ZERO, work, 1 )
-          CALL mp_sum( work(1:i-1), intra_bgrp_comm )
-          CALL ZGEMV( 'N', kdim, i-1, -ONE, V, kdmx, work, 1, ONE, V(1,i), 1 )
+          CALL ZGEMV( 'C', kdim, i-1, ONE, V, kdmx, V(1,i), 1, ZERO, work2d(1,1), 1 )
+          CALL mp_sum( work2d(1:i-1,1), intra_bgrp_comm )
+          CALL ZGEMV( 'N', kdim, i-1, -ONE, V, kdmx, work2d(1,1), 1, ONE, V(1,i), 1 )
        END IF
        !
-       nr = 0.0_DP
+       norm_t = 0.0_DP
        DO ig = 1, kdim
-          nr = nr + DBLE( CONJG(V(ig,i)) * V(ig,i) )
+          norm_t = norm_t + DBLE( CONJG(V(ig,i)) * V(ig,i) )
        END DO
-       CALL mp_sum( nr, intra_bgrp_comm )
-       nr = SQRT( nr )
-       IF ( nr > 1.0D-14 ) THEN
-          V(1:kdim,i) = V(1:kdim,i) / nr
-       ELSE IF ( lprint ) THEN
-          WRITE(6, '(5X,"cjdsym WARNING: initial vector ",I4,' // &
-               '" has near-zero norm after orthogonalization: ",ES10.3)') i, nr
+       CALL mp_sum( norm_t, intra_bgrp_comm )
+       norm_t = SQRT( norm_t )
+       IF ( norm_t > 1.0D-14 ) THEN
+          V(1:kdim,i) = V(1:kdim,i) / norm_t
        END IF
        !
        IF ( npol == 1 .AND. npw < npwx ) V(npw+1:npwx,i) = ZERO
@@ -347,25 +350,15 @@ CONTAINS
        END DO
     END DO
     !
-    IF ( lprint ) THEN
-       WRITE(6, '(5X,"cjdsym: initial hc diag(1:min(5,j)): ",5F12.6)') &
-            (REAL(hc(i,i)), i=1, MIN(5,j))
-       FLUSH(6)
-    END IF
-    !
   END SUBROUTINE cjd_init_subspace
   !
   !-----------------------------------------------------------------------
-  SUBROUTINE cjd_extract_ritz_pair( rnorm )
+  SUBROUTINE cjd_diag_projected()
     !-----------------------------------------------------------------------
     !
-    ! ... Diagonalize the projected eigenproblem, extract the best Ritz
-    ! ... pair (u, theta), and compute the residual norm.
+    ! ... Diagonalize the projected eigenproblem hc * vc = sc * vc * diag(ew).
     !
     IMPLICIT NONE
-    REAL(DP), INTENT(OUT) :: rnorm
-    !
-    ! ... Diagonalize hc * vc = sc * vc * diag(ew)
     !
     CALL start_clock( 'cjdsym:diag' )
     IF ( my_bgrp_id == root_bgrp_id ) THEN
@@ -378,125 +371,120 @@ CONTAINS
     END IF
     CALL stop_clock( 'cjdsym:diag' )
     !
-    ! ... Compute Ritz vector u = V * vc(:,1)
+  END SUBROUTINE cjd_diag_projected
+  !
+  !-----------------------------------------------------------------------
+  SUBROUTINE cjd_compute_residuals_block( nb_in )
+    !-----------------------------------------------------------------------
     !
-    u = ZERO
-    CALL ZGEMV( 'N', kdim, j, ONE, V, kdmx, vc(1,1), 1, ZERO, u, 1 )
+    ! ... Compute nb_in Ritz vectors, their residuals, and residual norms.
+    ! ... Uses ZGEMM for blocked matrix-vector products.
     !
-    ! ... Compute Au = W * vc(:,1) = H*u
+    IMPLICIT NONE
+    INTEGER, INTENT(IN) :: nb_in
     !
-    Au = ZERO
-    CALL ZGEMV( 'N', kdim, j, ONE, W, kdmx, vc(1,1), 1, ZERO, Au, 1 )
+    ! ... Compute Ritz vectors: ub(:,1:nb) = V * vc(:,1:nb)
     !
-    ! ... Compute Su = SW * vc(:,1) = S*u (or u if no uspp)
+    CALL ZGEMM( 'N', 'N', kdim, nb_in, j, ONE, V, kdmx, &
+                vc(1,1), nvecx, ZERO, ub, kdmx )
+    !
+    ! ... Compute H * Ritz vectors: rb = W * vc(:,1:nb) (temporary)
+    !
+    CALL ZGEMM( 'N', 'N', kdim, nb_in, j, ONE, W, kdmx, &
+                vc(1,1), nvecx, ZERO, rb, kdmx )
+    !
+    ! ... Compute S * Ritz vectors (into tb) and form residuals
     !
     IF ( uspp ) THEN
-       Su = ZERO
-       CALL ZGEMV( 'N', kdim, j, ONE, SW, kdmx, vc(1,1), 1, ZERO, Su, 1 )
+       CALL ZGEMM( 'N', 'N', kdim, nb_in, j, ONE, SW, kdmx, &
+                   vc(1,1), nvecx, ZERO, tb, kdmx )
+       DO ib = 1, nb_in
+          rb(1:kdim,ib) = rb(1:kdim,ib) - ew(ib) * tb(1:kdim,ib)
+       END DO
     ELSE
-       Su = u
-    END IF
-    !
-    ! ... Compute residual: r = Au - theta * Su
-    !
-    r(1:kdim) = Au(1:kdim) - ew(1) * Su(1:kdim)
-    !
-    ! ... Orthogonalize residual against converged eigenvectors
-    !
-    IF ( nconv > 0 ) THEN
-       DO i = 1, 2
-          CALL ZGEMV( 'C', kdim, nconv, ONE, evc, kdmx, r, 1, ZERO, work, 1 )
-          CALL mp_sum( work(1:nconv), intra_bgrp_comm )
-          CALL ZGEMV( 'N', kdim, nconv, -ONE, evc, kdmx, work, 1, ONE, r, 1 )
+       DO ib = 1, nb_in
+          rb(1:kdim,ib) = rb(1:kdim,ib) - ew(ib) * ub(1:kdim,ib)
        END DO
     END IF
     !
-    ! ... Compute residual norm
+    ! ... Orthogonalize residuals against converged eigenvectors
     !
-    rnorm = 0.0_DP
-    DO i = 1, kdim
-       rnorm = rnorm + DBLE( CONJG(r(i)) * r(i) )
-    END DO
-    CALL mp_sum( rnorm, intra_bgrp_comm )
-    rnorm = SQRT( rnorm )
-    !
-    IF ( lprint .AND. ( MOD(iter, 1) == 0 .OR. iter <= 10 ) ) THEN
-       WRITE(6, '(5X,"cjdsym it=",I4," nconv=",I3," j=",I3,' // &
-            '" theta=",F14.8," |r|=",ES10.3," tol=",ES10.3)') &
-            iter, nconv, j, ew(1), rnorm, tol
-       IF ( j >= 2 ) THEN
-          WRITE(6, '(5X,"  ew(1:",I2,")=",8F12.6)') &
-               MIN(j, 8), (ew(i), i=1, MIN(j, 8))
-       END IF
-       FLUSH(6)
+    IF ( nconv > 0 ) THEN
+       DO i = 1, 2
+          CALL ZGEMM( 'C', 'N', nconv, nb_in, kdim, ONE, evc, kdmx, &
+                      rb, kdmx, ZERO, work2d, nvecx )
+          CALL mp_sum( work2d(1:nconv, 1:nb_in), intra_bgrp_comm )
+          CALL ZGEMM( 'N', 'N', kdim, nb_in, nconv, -ONE, evc, kdmx, &
+                      work2d, nvecx, ONE, rb, kdmx )
+       END DO
     END IF
     !
-  END SUBROUTINE cjd_extract_ritz_pair
+    ! ... Compute residual norms
+    !
+    DO ib = 1, nb_in
+       rnorms(ib) = 0.0_DP
+       DO ig = 1, kdim
+          rnorms(ib) = rnorms(ib) + DBLE( CONJG(rb(ig,ib)) * rb(ig,ib) )
+       END DO
+    END DO
+    CALL mp_sum( rnorms(1:nb_in), intra_bgrp_comm )
+    rnorms(1:nb_in) = SQRT( rnorms(1:nb_in) )
+    !
+  END SUBROUTINE cjd_compute_residuals_block
   !
   !-----------------------------------------------------------------------
-  SUBROUTINE cjd_deflate()
+  SUBROUTINE cjd_deflate_block( nrem )
     !-----------------------------------------------------------------------
     !
-    ! ... Remove the converged component from the search subspace.
-    ! ... Rotates V, W, SW to keep Ritz vectors 2:j, or reinitializes
-    ! ... if the subspace becomes empty.
+    ! ... Remove nrem converged Ritz vectors from the search subspace.
+    ! ... Rotates V, W, SW to keep Ritz vectors nrem+1:j.
     !
     IMPLICIT NONE
+    INTEGER, INTENT(IN) :: nrem
+    INTEGER :: jnew
     !
-    IF ( j > 1 ) THEN
+    IF ( j > nrem ) THEN
        !
-       ! ... Rotate subspace: V_new = V * vc(:,2:j), etc.
+       jnew = j - nrem
        !
-       CALL ZGEMM( 'N', 'N', kdim, j-1, j, ONE, V, kdmx, &
-                   vc(1,2), nvecx, ZERO, Vtmp, kdmx )
-       V(1:npwx*npol, 1:j-1) = Vtmp(1:npwx*npol, 1:j-1)
+       CALL ZGEMM( 'N', 'N', kdim, jnew, j, ONE, V, kdmx, &
+                   vc(1,nrem+1), nvecx, ZERO, Vtmp, kdmx )
+       V(1:npwx*npol, 1:jnew) = Vtmp(1:npwx*npol, 1:jnew)
        !
-       CALL ZGEMM( 'N', 'N', kdim, j-1, j, ONE, W, kdmx, &
-                   vc(1,2), nvecx, ZERO, Wtmp, kdmx )
-       W(1:npwx*npol, 1:j-1) = Wtmp(1:npwx*npol, 1:j-1)
+       CALL ZGEMM( 'N', 'N', kdim, jnew, j, ONE, W, kdmx, &
+                   vc(1,nrem+1), nvecx, ZERO, Wtmp, kdmx )
+       W(1:npwx*npol, 1:jnew) = Wtmp(1:npwx*npol, 1:jnew)
        !
        IF ( uspp ) THEN
-          CALL ZGEMM( 'N', 'N', kdim, j-1, j, ONE, SW, kdmx, &
-                      vc(1,2), nvecx, ZERO, SWtmp, kdmx )
-          SW(1:npwx*npol, 1:j-1) = SWtmp(1:npwx*npol, 1:j-1)
+          CALL ZGEMM( 'N', 'N', kdim, jnew, j, ONE, SW, kdmx, &
+                      vc(1,nrem+1), nvecx, ZERO, SWtmp, kdmx )
+          SW(1:npwx*npol, 1:jnew) = SWtmp(1:npwx*npol, 1:jnew)
        END IF
        !
-       j = j - 1
+       j = jnew
        !
-       ! ... After rotation by eigenvectors: hc = diag(ew(2:)), sc = I
+       ! ... After rotation by eigenvectors: hc = diag(ew(nrem+1:)), sc = I
        !
        hc = ZERO
        sc = ZERO
        DO i = 1, j
-          hc(i,i) = CMPLX( ew(i+1), 0.0_DP, kind=DP )
+          hc(i,i) = CMPLX( ew(nrem+i), 0.0_DP, kind=DP )
           sc(i,i) = ONE
        END DO
        !
-       IF ( lprint ) THEN
-          WRITE(6, '(5X,"cjdsym: deflated, new subspace dim j=",I4)') j
-          FLUSH(6)
-       END IF
-       !
     ELSE
        !
-       ! ... Subspace empty after deflation, reinitialize
-       !
-       IF ( lprint ) THEN
-          WRITE(6, '(5X,"cjdsym: subspace empty, reinitializing")')
-          FLUSH(6)
-       END IF
        CALL cjd_reinit_subspace()
        !
     END IF
     !
-  END SUBROUTINE cjd_deflate
+  END SUBROUTINE cjd_deflate_block
   !
   !-----------------------------------------------------------------------
   SUBROUTINE cjd_restart()
     !-----------------------------------------------------------------------
     !
-    ! ... Restart the subspace by keeping the best jmin Ritz vectors
-    ! ... when the subspace dimension reaches nvecx.
+    ! ... Restart the subspace by keeping the best jmin Ritz vectors.
     !
     IMPLICIT NONE
     !
@@ -523,8 +511,6 @@ CONTAINS
     !
     j = jmin
     !
-    ! ... After rotation by eigenvectors: hc = diag(ew), sc = I
-    !
     hc = ZERO
     sc = ZERO
     DO i = 1, j
@@ -537,32 +523,30 @@ CONTAINS
   END SUBROUTINE cjd_restart
   !
   !-----------------------------------------------------------------------
-  SUBROUTINE cjd_solve_correction()
+  SUBROUTINE cjd_solve_corrections_block( nb_in )
     !-----------------------------------------------------------------------
     !
-    ! ... Solve the correction equation (simplified Jacobi-Davidson):
-    ! ... Apply preconditioner to residual, then project out converged
-    ! ... eigenvectors and the current Ritz vector.
+    ! ... Apply preconditioner to nb_in residuals (in-place in rb),
+    ! ... then project out converged eigenvectors.
     !
     IMPLICIT NONE
-    REAL(DP) :: e_tmp(1)
+    INTEGER, INTENT(IN) :: nb_in
     !
     CALL start_clock( 'cjdsym:correction' )
     !
     ! ... Apply preconditioner
     !
-    !
     IF ( use_g_psi ) THEN
-       ! ... Use g_psi_ptr: diagonal approx. to (H-e)^{-1}
-       e_tmp(1) = ew(1)
-       t(1:npwx*npol) = r(1:npwx*npol)
-       CALL g_psi_ptr( npwx, npw, 1, npol, t, ew(1) )
+       ! ... g_psi_ptr handles all nb_in vectors at once
+       CALL g_psi_ptr( npwx, npw, nb_in, npol, rb, ew )
     ELSE
-       ! ... TPA preconditioner: t = r / (g2kin + shift)
-       t = ZERO
-       DO ipol = 1, npol
-          DO ig = 1, npw
-           t(ig + (ipol-1)*npwx) = r(ig + (ipol-1)*npwx) / (g2kin(ig) + default_shift - ew(1))
+       ! ... TPA preconditioner: rb = rb / (g2kin + shift - ew)
+       DO ib = 1, nb_in
+          DO ipol = 1, npol
+             DO ig = 1, npw
+                rb(ig+(ipol-1)*npwx,ib) = rb(ig+(ipol-1)*npwx,ib) / &
+                   ( g2kin(ig) + default_shift - ew(ib) )
+             END DO
           END DO
        END DO
     END IF
@@ -571,179 +555,166 @@ CONTAINS
     !
     IF ( nconv > 0 ) THEN
        DO i = 1, 2
-          CALL ZGEMV( 'C', kdim, nconv, ONE, evc, kdmx, t, 1, ZERO, work, 1 )
-          CALL mp_sum( work(1:nconv), intra_bgrp_comm )
-          CALL ZGEMV( 'N', kdim, nconv, -ONE, evc, kdmx, work, 1, ONE, t, 1 )
+          CALL ZGEMM( 'C', 'N', nconv, nb_in, kdim, ONE, evc, kdmx, &
+                      rb, kdmx, ZERO, work2d, nvecx )
+          CALL mp_sum( work2d(1:nconv, 1:nb_in), intra_bgrp_comm )
+          CALL ZGEMM( 'N', 'N', kdim, nb_in, nconv, -ONE, evc, kdmx, &
+                      work2d, nvecx, ONE, rb, kdmx )
        END DO
-    END IF
-    !
-    ! ... Project out current Ritz vector u
-    !
-    cdot = ZERO
-    DO i = 1, kdim
-       cdot = cdot + CONJG(u(i)) * t(i)
-    END DO
-    CALL mp_sum( cdot, intra_bgrp_comm )
-    !
-    rdot = 0.0_DP
-    DO i = 1, kdim
-       rdot = rdot + DBLE( CONJG(u(i)) * u(i) )
-    END DO
-    CALL mp_sum( rdot, intra_bgrp_comm )
-    !
-    IF ( rdot > 1.0D-30 ) THEN
-       coeff_u = cdot / CMPLX( rdot, 0.0_DP, kind=DP )
-       t(1:kdim) = t(1:kdim) - coeff_u * u(1:kdim)
     END IF
     !
     CALL stop_clock( 'cjdsym:correction' )
     !
-  END SUBROUTINE cjd_solve_correction
+  END SUBROUTINE cjd_solve_corrections_block
   !
   !-----------------------------------------------------------------------
-  SUBROUTINE cjd_expand_subspace( skip_expand )
+  SUBROUTINE cjd_expand_subspace_block( nb_in )
     !-----------------------------------------------------------------------
     !
-    ! ... Orthogonalize the correction vector t against the search space V,
-    ! ... normalize it, add it to V, compute H*t and S*t, and update the
-    ! ... projected matrices hc and sc.
+    ! ... Orthogonalize nb_in correction vectors (in rb) against V and
+    ! ... each other, normalize, add to V, compute H*V and S*V for the
+    ! ... new vectors, and update the projected matrices hc and sc.
     !
     IMPLICIT NONE
-    LOGICAL, INTENT(OUT) :: skip_expand
-    !
-    skip_expand = .FALSE.
-    !
-    ! ... Orthogonalize t against V (double Gram-Schmidt for stability)
+    INTEGER, INTENT(IN) :: nb_in
+    INTEGER :: jj, ii
     !
     CALL start_clock( 'cjdsym:ortho' )
     !
-    DO i = 1, 2
-       CALL ZGEMV( 'C', kdim, j, ONE, V, kdmx, t, 1, ZERO, work, 1 )
-       CALL mp_sum( work(1:j), intra_bgrp_comm )
-       CALL ZGEMV( 'N', kdim, j, -ONE, V, kdmx, work, 1, ONE, t, 1 )
-    END DO
+    nact = 0
     !
-    ! ... Normalize t
-    !
-    nt = 0.0_DP
-    DO i = 1, kdim
-       nt = nt + DBLE( CONJG(t(i)) * t(i) )
+    DO ib = 1, nb_in
+       !
+       ! ... Orthogonalize rb(:,ib) against V(:,1:j+nact) (double Gram-Schmidt)
+       ! ... This includes previously accepted corrections in V(:,j+1:j+nact)
+       !
+       DO i = 1, 2
+          CALL ZGEMV( 'C', kdim, j+nact, ONE, V, kdmx, rb(1,ib), 1, &
+                      ZERO, work2d(1,1), 1 )
+          CALL mp_sum( work2d(1:j+nact,1), intra_bgrp_comm )
+          CALL ZGEMV( 'N', kdim, j+nact, -ONE, V, kdmx, work2d(1,1), 1, &
+                      ONE, rb(1,ib), 1 )
+       END DO
+       !
+       ! ... Normalize
+       !
+       norm_t = 0.0_DP
+       DO ig = 1, kdim
+          norm_t = norm_t + DBLE( CONJG(rb(ig,ib)) * rb(ig,ib) )
+       END DO
+       CALL mp_sum( norm_t, intra_bgrp_comm )
+       norm_t = SQRT( norm_t )
+       !
+       IF ( norm_t < 1.0D-14 ) CYCLE  ! skip this correction
+       !
+       rb(1:kdim,ib) = rb(1:kdim,ib) / norm_t
+       !
+       ! ... Zero padding
+       !
+       IF ( npol == 1 .AND. npw < npwx ) rb(npw+1:npwx,ib) = ZERO
+       IF ( npol == 2 .AND. npw < npwx ) THEN
+          rb(npw+1:npwx,ib) = ZERO
+          rb(npwx+npw+1:2*npwx,ib) = ZERO
+       END IF
+       !
+       ! ... Accept: place into search space
+       !
+       nact = nact + 1
+       V(1:npwx*npol, j+nact) = rb(1:npwx*npol, ib)
+       !
     END DO
-    CALL mp_sum( nt, intra_bgrp_comm )
-    nt = SQRT( nt )
     !
     CALL stop_clock( 'cjdsym:ortho' )
     !
-    IF ( nt < 1.0D-14 ) THEN
-       IF ( lprint ) THEN
-          WRITE(6, '(5X,"cjdsym: correction too small, |t|=",ES10.3,' // &
-               '" skipping")') nt
-          FLUSH(6)
-       END IF
-       skip_expand = .TRUE.
-       RETURN
-    END IF
+    IF ( nact == 0 ) RETURN
     !
-    t(1:kdim) = t(1:kdim) / nt
-    IF ( npol == 1 .AND. npw < npwx ) t(npw+1:npwx) = ZERO
-    IF ( npol == 2 .AND. npw < npwx ) THEN
-       t(npw+1:npwx) = ZERO
-       t(npwx+npw+1:2*npwx) = ZERO
-    END IF
+    ! ... Compute H*V and S*V for new columns (single blocked call)
     !
-    ! ... Add correction to search space
+    CALL h_psi_ptr( npwx, npw, nact, V(1,j+1), W(1,j+1) )
+    nhpsi = nhpsi + nact
     !
-    j = j + 1
-    V(1:npwx*npol, j) = t(1:npwx*npol)
+    IF ( uspp ) CALL s_psi_ptr( npwx, npw, nact, V(1,j+1), SW(1,j+1) )
     !
-    ! ... Compute H*t and S*t
-    !
-    CALL h_psi_ptr( npwx, npw, 1, V(1,j), W(1,j) )
-    nhpsi = nhpsi + 1
-    !
-    IF ( uspp ) CALL s_psi_ptr( npwx, npw, 1, V(1,j), SW(1,j) )
-    !
-    ! ... Update projected Hamiltonian: new column hc(1:j, j)
+    ! ... Update projected Hamiltonian (blocked ZGEMM)
     !
     CALL start_clock( 'cjdsym:overlap' )
     !
-    CALL ZGEMV( 'C', kdim, j, ONE, V, kdmx, W(1,j), 1, ZERO, hc(1,j), 1 )
-    CALL mp_sum( hc(1:j, j), intra_bgrp_comm )
+    CALL ZGEMM( 'C', 'N', j+nact, nact, kdim, ONE, V, kdmx, &
+                W(1,j+1), kdmx, ZERO, hc(1,j+1), nvecx )
+    CALL mp_sum( hc(1:j+nact, j+1:j+nact), intra_bgrp_comm )
     !
-    DO i = 1, j - 1
-       hc(j,i) = CONJG( hc(i,j) )
+    DO ib = 1, nact
+       jj = j + ib
+       DO ii = 1, jj - 1
+          hc(jj,ii) = CONJG( hc(ii,jj) )
+       END DO
+       hc(jj,jj) = CMPLX( REAL( hc(jj,jj) ), 0.0_DP, kind=DP )
     END DO
-    hc(j,j) = CMPLX( REAL( hc(j,j) ), 0.0_DP, kind=DP )
     !
-    ! ... Update projected overlap: new column sc(1:j, j)
+    ! ... Update projected overlap (blocked ZGEMM)
     !
     IF ( uspp ) THEN
-       CALL ZGEMV( 'C', kdim, j, ONE, V, kdmx, SW(1,j), 1, ZERO, sc(1,j), 1 )
+       CALL ZGEMM( 'C', 'N', j+nact, nact, kdim, ONE, V, kdmx, &
+                   SW(1,j+1), kdmx, ZERO, sc(1,j+1), nvecx )
     ELSE
-       CALL ZGEMV( 'C', kdim, j, ONE, V, kdmx, V(1,j), 1, ZERO, sc(1,j), 1 )
+       CALL ZGEMM( 'C', 'N', j+nact, nact, kdim, ONE, V, kdmx, &
+                   V(1,j+1), kdmx, ZERO, sc(1,j+1), nvecx )
     END IF
-    CALL mp_sum( sc(1:j, j), intra_bgrp_comm )
+    CALL mp_sum( sc(1:j+nact, j+1:j+nact), intra_bgrp_comm )
     !
-    DO i = 1, j - 1
-       sc(j,i) = CONJG( sc(i,j) )
+    DO ib = 1, nact
+       jj = j + ib
+       DO ii = 1, jj - 1
+          sc(jj,ii) = CONJG( sc(ii,jj) )
+       END DO
+       sc(jj,jj) = CMPLX( REAL( sc(jj,jj) ), 0.0_DP, kind=DP )
     END DO
-    sc(j,j) = CMPLX( REAL( sc(j,j) ), 0.0_DP, kind=DP )
+    !
+    j = j + nact
     !
     CALL stop_clock( 'cjdsym:overlap' )
     !
-  END SUBROUTINE cjd_expand_subspace
+  END SUBROUTINE cjd_expand_subspace_block
   !
   !-----------------------------------------------------------------------
   SUBROUTINE cjd_reinit_subspace()
     !-----------------------------------------------------------------------
     !
     ! ... Reinitialize the search space when it becomes empty after deflation.
-    ! ... Creates a random vector orthogonal to converged eigenvectors.
     !
     IMPLICIT NONE
     INTEGER :: ig2, ipol2
     REAL(DP) :: rr, ri
     !
-    ! ... Create a pseudo-random initial vector
-    !
     j = 1
     V(1:npwx*npol, 1) = ZERO
     DO ipol2 = 1, npol
        DO ig2 = 1, npw
-          ! ... Simple deterministic initialization
           rr = DBLE(MOD(ig2 + nconv*137, 1000)) / 1000.0_DP
           ri = DBLE(MOD(ig2 + nconv*251, 1000)) / 1000.0_DP
           V(ig2 + (ipol2-1)*npwx, 1) = CMPLX( rr, ri, kind=DP )
        END DO
     END DO
     !
-    ! ... Orthogonalize against converged eigenvectors (double)
-    !
     DO i = 1, 2
-       CALL ZGEMV( 'C', kdim, nconv, ONE, evc, kdmx, V(1,1), 1, ZERO, work, 1 )
-       CALL mp_sum( work(1:nconv), intra_bgrp_comm )
-       CALL ZGEMV( 'N', kdim, nconv, -ONE, evc, kdmx, work, 1, ONE, V(1,1), 1 )
+       CALL ZGEMV( 'C', kdim, nconv, ONE, evc, kdmx, V(1,1), 1, ZERO, work2d(1,1), 1 )
+       CALL mp_sum( work2d(1:nconv,1), intra_bgrp_comm )
+       CALL ZGEMV( 'N', kdim, nconv, -ONE, evc, kdmx, work2d(1,1), 1, ONE, V(1,1), 1 )
     END DO
     !
-    ! ... Normalize
-    !
-    nt = 0.0_DP
+    norm_t = 0.0_DP
     DO ig2 = 1, kdim
-       nt = nt + DBLE( CONJG(V(ig2,1)) * V(ig2,1) )
+       norm_t = norm_t + DBLE( CONJG(V(ig2,1)) * V(ig2,1) )
     END DO
-    CALL mp_sum( nt, intra_bgrp_comm )
-    nt = SQRT( nt )
-    IF ( nt > 1.0D-14 ) THEN
-       V(1:kdim, 1) = V(1:kdim, 1) / nt
+    CALL mp_sum( norm_t, intra_bgrp_comm )
+    norm_t = SQRT( norm_t )
+    IF ( norm_t > 1.0D-14 ) THEN
+       V(1:kdim, 1) = V(1:kdim, 1) / norm_t
     END IF
-    !
-    ! ... Compute H*V and S*V
     !
     CALL h_psi_ptr( npwx, npw, 1, V(1,1), W(1,1) )
     nhpsi = nhpsi + 1
     IF ( uspp ) CALL s_psi_ptr( npwx, npw, 1, V(1,1), SW(1,1) )
-    !
-    ! ... Build projected matrices (1x1)
     !
     hc = ZERO
     sc = ZERO
@@ -758,12 +729,6 @@ CONTAINS
     END IF
     CALL mp_sum( sc(1:1, 1:1), intra_bgrp_comm )
     sc(1,1) = CMPLX( REAL( sc(1,1) ), 0.0_DP, kind=DP )
-    !
-    IF ( lprint ) THEN
-       WRITE(6, '(5X,"cjdsym: reinit done, hc(1,1)=",F14.8," sc(1,1)=",F14.8)') &
-            REAL(hc(1,1)), REAL(sc(1,1))
-       FLUSH(6)
-    END IF
     !
   END SUBROUTINE cjd_reinit_subspace
   !

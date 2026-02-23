@@ -51,7 +51,7 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, g_psi_ptr, &
   REAL(DP), PARAMETER :: default_shift = 1.0_DP
   LOGICAL, PARAMETER :: use_g_psi = .TRUE.
   !
-  INTEGER :: j, nconv, iter, kdim, kdmx, ierr, jmin
+  INTEGER :: j, nconv, iter, kdim, kdmx, ierr
   INTEGER :: i, ig, ipol, ib, nb, nact, nconv_new, k
   REAL(DP) :: tol, empty_ethr, norm_t
   LOGICAL :: lprint, lrot_active
@@ -100,8 +100,6 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, g_psi_ptr, &
      kdmx = npwx*npol
   END IF
   !
-  jmin = MAX( npw, nvec + 5 )
-  IF ( jmin > nvecx / 2 ) jmin = nvecx / 2
   !
   ! ... Allocate workspace
   !
@@ -526,32 +524,40 @@ CONTAINS
   SUBROUTINE cjd_restart()
     !-----------------------------------------------------------------------
     !
-    ! ... Restart the subspace by keeping the best jmin Ritz vectors.
+    ! ... Restart the subspace: keep the best (nvec-nconv) Ritz vectors,
+    ! ... one per remaining unconverged eigenvalue.  This mirrors Davidson's
+    ! ... restart to exactly nvec vectors: both methods retain the minimum
+    ! ... complete set and let the next expansion rebuild the search space.
     !
     IMPLICIT NONE
+    INTEGER :: jnew
     !
     CALL start_clock( 'cjdsym:restart' )
     !
+    jnew = MIN( nvec - nconv, j )
+    !
     IF ( lprint ) THEN
-       WRITE(6, '(5X,"cjdsym: RESTART j=",I4," -> jmin=",I4)') j, jmin
+       WRITE(6, '(5X,"cjdsym: RESTART j=",I4," -> ",I4)') j, jnew
        FLUSH(6)
     END IF
     !
-    CALL ZGEMM( 'N', 'N', kdim, jmin, j, ONE, V, kdmx, &
+    CALL ZGEMM( 'N', 'N', kdim, jnew, j, ONE, V, kdmx, &
                 vc(1,1), nvecx, ZERO, Vtmp, kdmx )
-    V(1:npwx*npol, 1:jmin) = Vtmp(1:npwx*npol, 1:jmin)
+    V(1:npwx*npol, 1:jnew) = Vtmp(1:npwx*npol, 1:jnew)
     !
-    CALL ZGEMM( 'N', 'N', kdim, jmin, j, ONE, W, kdmx, &
+    CALL ZGEMM( 'N', 'N', kdim, jnew, j, ONE, W, kdmx, &
                 vc(1,1), nvecx, ZERO, Wtmp, kdmx )
-    W(1:npwx*npol, 1:jmin) = Wtmp(1:npwx*npol, 1:jmin)
+    W(1:npwx*npol, 1:jnew) = Wtmp(1:npwx*npol, 1:jnew)
     !
     IF ( uspp ) THEN
-       CALL ZGEMM( 'N', 'N', kdim, jmin, j, ONE, SW, kdmx, &
+       CALL ZGEMM( 'N', 'N', kdim, jnew, j, ONE, SW, kdmx, &
                    vc(1,1), nvecx, ZERO, SWtmp, kdmx )
-       SW(1:npwx*npol, 1:jmin) = SWtmp(1:npwx*npol, 1:jmin)
+       SW(1:npwx*npol, 1:jnew) = SWtmp(1:npwx*npol, 1:jnew)
     END IF
     !
-    j = jmin
+    j = jnew
+    !
+    ! ... After rotation by eigenvectors: hc = diag(ew), sc = I (exact)
     !
     hc = ZERO
     sc = ZERO

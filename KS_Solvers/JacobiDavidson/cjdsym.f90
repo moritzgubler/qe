@@ -53,9 +53,9 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, g_psi_ptr, &
   !
   INTEGER :: j, nconv, iter, kdim, kdmx, ierr
   INTEGER :: i, ig, ipol, ib, nb, nact, nconv_new, k
-  REAL(DP) :: tol, empty_ethr, norm_t
+  REAL(DP) :: empty_ethr, norm_t
   LOGICAL :: lprint, lrot_active
-  REAL(DP) :: rnorms(nvec)
+  REAL(DP) :: rnorms(nvec), e_old(nvec)
   !
   COMPLEX(DP), ALLOCATABLE :: V(:,:), W(:,:), SW(:,:)
     ! search space basis vectors / H * V / S * V
@@ -89,8 +89,8 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, g_psi_ptr, &
   !
   print*, npw, npwx, nvec, nvecx
   !
-  empty_ethr = sqrt(MAX( ( ethr * 5.D0 ), 1.D-5 ))
-  tol = sqrt(ethr)
+  empty_ethr = MAX( ethr * 5.D0, 1.D-5 )
+  e_old = 1.0D10
   !
   IF ( npol == 1 ) THEN
      kdim = npw
@@ -173,13 +173,13 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, g_psi_ptr, &
      nconv_new = 0
      DO ib = 1, nb
         IF ( btype(nconv+ib) == 1 ) THEN
-           IF ( rnorms(ib) < tol ) THEN
+           IF ( ABS( ew(ib) - e_old(nconv+ib) ) < ethr ) THEN
               nconv_new = nconv_new + 1
            ELSE
               EXIT
            END IF
         ELSE
-           IF ( rnorms(ib) < empty_ethr ) THEN
+           IF ( ABS( ew(ib) - e_old(nconv+ib) ) < empty_ethr ) THEN
               nconv_new = nconv_new + 1
            ELSE
               EXIT
@@ -189,10 +189,14 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, g_psi_ptr, &
      !
      IF ( lprint ) THEN
         WRITE(6, '(5X,"cjdsym it=",I4," nconv=",I3," j=",I3,' // &
-             '" nb=",I2," rnorms=",4ES10.3)') &
-             iter, nconv, j, nb, (rnorms(ib), ib=1, MIN(nb,4))
+             '" nb=",I2," de=",4ES10.3)') &
+             iter, nconv, j, nb, (ABS(ew(ib) - e_old(nconv+ib)), ib=1, MIN(nb,4))
         FLUSH(6)
      END IF
+     !
+     ! ... Update eigenvalue history before deflation
+     !
+     e_old(nconv+1:nconv+MIN(j,nvec-nconv)) = ew(1:MIN(j,nvec-nconv))
      !
      ! ... Store converged eigenpairs and deflate
      !

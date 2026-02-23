@@ -11,7 +11,7 @@
 !----------------------------------------------------------------------------
 SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, g_psi_ptr, &
                    npw, npwx, nvec, nvecx, npol, evc, ethr, &
-                   g2kin, e, btype, notcnv, jd_iter, nhpsi )
+                   g2kin, e, btype, notcnv, lrot, jd_iter, nhpsi )
   !----------------------------------------------------------------------------
   !
   ! ... Blocked Jacobi-Davidson iterative diagonalization:
@@ -37,6 +37,8 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, g_psi_ptr, &
   LOGICAL, INTENT(IN) :: uspp
   REAL(DP), INTENT(IN) :: g2kin(npwx)
   INTEGER, INTENT(IN) :: btype(nvec)
+  LOGICAL, INTENT(IN) :: lrot
+    ! .TRUE. if the wfc have already been rotated (skip MGS and initial diag)
   REAL(DP), INTENT(OUT) :: e(nvec)
   INTEGER, INTENT(OUT) :: jd_iter, notcnv
   INTEGER, INTENT(OUT) :: nhpsi
@@ -52,7 +54,7 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, g_psi_ptr, &
   INTEGER :: j, nconv, iter, kdim, kdmx, ierr, jmin
   INTEGER :: i, ig, ipol, ib, nb, nact, nconv_new, k
   REAL(DP) :: tol, empty_ethr, norm_t
-  LOGICAL :: lprint
+  LOGICAL :: lprint, lrot_active
   REAL(DP) :: rnorms(nvec)
   !
   COMPLEX(DP), ALLOCATABLE :: V(:,:), W(:,:), SW(:,:)
@@ -82,7 +84,9 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, g_psi_ptr, &
   CALL start_clock( 'cjdsym' )
   !
   IF ( nvec > nvecx / 2 ) CALL errore( 'cjdsym', 'nvecx is too small', 1 )
-
+  !
+  lrot_active = lrot
+  !
   print*, npw, npwx, nvec, nvecx
   !
   empty_ethr = sqrt(MAX( ( ethr * 5.D0 ), 1.D-5 ))
@@ -294,28 +298,33 @@ CONTAINS
     W(:,:) = ZERO
     V(1:npwx*npol, 1:nvec) = evc(1:npwx*npol, 1:nvec)
     !
-    ! ... Orthogonalize initial search space (modified Gram-Schmidt)
+    ! ... Orthogonalize initial search space (modified Gram-Schmidt).
+    ! ... Skipped when lrot=.TRUE.: input evc are already orthonormal.
     !
     DO i = 1, nvec
        !
-       IF ( i > 1 ) THEN
-          CALL ZGEMV( 'C', kdim, i-1, ONE, V, kdmx, V(1,i), 1, ZERO, work2d(1,1), 1 )
-          CALL mp_sum( work2d(1:i-1,1), intra_bgrp_comm )
-          CALL ZGEMV( 'N', kdim, i-1, -ONE, V, kdmx, work2d(1,1), 1, ONE, V(1,i), 1 )
-          ! ... Repeat for numerical stability
-          CALL ZGEMV( 'C', kdim, i-1, ONE, V, kdmx, V(1,i), 1, ZERO, work2d(1,1), 1 )
-          CALL mp_sum( work2d(1:i-1,1), intra_bgrp_comm )
-          CALL ZGEMV( 'N', kdim, i-1, -ONE, V, kdmx, work2d(1,1), 1, ONE, V(1,i), 1 )
-       END IF
-       !
-       norm_t = 0.0_DP
-       DO ig = 1, kdim
-          norm_t = norm_t + DBLE( CONJG(V(ig,i)) * V(ig,i) )
-       END DO
-       CALL mp_sum( norm_t, intra_bgrp_comm )
-       norm_t = SQRT( norm_t )
-       IF ( norm_t > 1.0D-14 ) THEN
-          V(1:kdim,i) = V(1:kdim,i) / norm_t
+       IF ( .NOT. lrot ) THEN
+          !
+          IF ( i > 1 ) THEN
+             CALL ZGEMV( 'C', kdim, i-1, ONE, V, kdmx, V(1,i), 1, ZERO, work2d(1,1), 1 )
+             CALL mp_sum( work2d(1:i-1,1), intra_bgrp_comm )
+             CALL ZGEMV( 'N', kdim, i-1, -ONE, V, kdmx, work2d(1,1), 1, ONE, V(1,i), 1 )
+             ! ... Repeat for numerical stability
+             CALL ZGEMV( 'C', kdim, i-1, ONE, V, kdmx, V(1,i), 1, ZERO, work2d(1,1), 1 )
+             CALL mp_sum( work2d(1:i-1,1), intra_bgrp_comm )
+             CALL ZGEMV( 'N', kdim, i-1, -ONE, V, kdmx, work2d(1,1), 1, ONE, V(1,i), 1 )
+          END IF
+          !
+          norm_t = 0.0_DP
+          DO ig = 1, kdim
+             norm_t = norm_t + DBLE( CONJG(V(ig,i)) * V(ig,i) )
+          END DO
+          CALL mp_sum( norm_t, intra_bgrp_comm )
+          norm_t = SQRT( norm_t )
+          IF ( norm_t > 1.0D-14 ) THEN
+             V(1:kdim,i) = V(1:kdim,i) / norm_t
+          END IF
+          !
        END IF
        !
        IF ( npol == 1 .AND. npw < npwx ) V(npw+1:npwx,i) = ZERO
@@ -368,18 +377,40 @@ CONTAINS
     !-----------------------------------------------------------------------
     !
     ! ... Diagonalize the projected eigenproblem hc * vc = sc * vc * diag(ew).
+    ! ... When lrot_active=.TRUE. (first call after lrot), skip diaghg and
+    ! ... assume the basis is already diagonal: vc = I, ew = diag(hc).
     !
     IMPLICIT NONE
+    INTEGER :: n
     !
     CALL start_clock( 'cjdsym:diag' )
-    IF ( my_bgrp_id == root_bgrp_id ) THEN
-       CALL diaghg( j, j, hc, sc, nvecx, ew, vc, &
-                    me_bgrp, root_bgrp, intra_bgrp_comm )
+    !
+    IF ( lrot_active ) THEN
+       !
+       vc = ZERO
+       DO n = 1, j
+          ew(n) = REAL( hc(n,n) )
+          vc(n,n) = ONE
+       END DO
+       IF ( nbgrp > 1 ) THEN
+          CALL mp_bcast( vc, root_bgrp_id, inter_bgrp_comm )
+          CALL mp_bcast( ew, root_bgrp_id, inter_bgrp_comm )
+       END IF
+       lrot_active = .FALSE.
+       !
+    ELSE
+       !
+       IF ( my_bgrp_id == root_bgrp_id ) THEN
+          CALL diaghg( j, j, hc, sc, nvecx, ew, vc, &
+                       me_bgrp, root_bgrp, intra_bgrp_comm )
+       END IF
+       IF ( nbgrp > 1 ) THEN
+          CALL mp_bcast( vc, root_bgrp_id, inter_bgrp_comm )
+          CALL mp_bcast( ew, root_bgrp_id, inter_bgrp_comm )
+       END IF
+       !
     END IF
-    IF ( nbgrp > 1 ) THEN
-       CALL mp_bcast( vc, root_bgrp_id, inter_bgrp_comm )
-       CALL mp_bcast( ew, root_bgrp_id, inter_bgrp_comm )
-    END IF
+    !
     CALL stop_clock( 'cjdsym:diag' )
     !
   END SUBROUTINE cjd_diag_projected

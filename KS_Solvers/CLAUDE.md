@@ -41,7 +41,7 @@ Dense matrix diagonalization (full matrix construction and LAPACK solve).
 
 ### JacobiDavidson (`JacobiDavidson/`)
 Jacobi-Davidson eigensolver. Processes one eigenvalue at a time with explicit deflation and a TPA (diagonal) preconditioner.
-- `rjdsym.f90` - Real (gamma-point) Jacobi-Davidson
+- `rjdsym.f90` - Real (gamma-point) Jacobi-Davidson ALWAYS SKIP THIS, THIS SHOULD NOT BE WORKED ON YET
 - `cjdsym.f90` - Complex (k-point) Jacobi-Davidson
 
 ### Davidson_RCI (`Davidson_RCI/`)

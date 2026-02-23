@@ -352,23 +352,29 @@ CONTAINS
     CALL ZGEMM( 'C', 'N', j, j, kdim, ONE, V, kdmx, W, kdmx, ZERO, hc, nvecx )
     CALL mp_sum( hc(1:j, 1:j), intra_bgrp_comm )
     !
-    ! ... Build projected overlap sc = V^H * S*V (or V^H * V)
+    ! ... Build projected overlap sc = V^H * S*V (identity when no USPP)
     !
     IF ( uspp ) THEN
        CALL ZGEMM( 'C', 'N', j, j, kdim, ONE, V, kdmx, SW, kdmx, ZERO, sc, nvecx )
+       CALL mp_sum( sc(1:j, 1:j), intra_bgrp_comm )
+       DO i = 1, j
+          sc(i,i) = CMPLX( REAL( sc(i,i) ), 0.0_DP, kind=DP )
+          DO k = i + 1, j
+             sc(i,k) = CONJG( sc(k,i) )
+          END DO
+       END DO
     ELSE
-       CALL ZGEMM( 'C', 'N', j, j, kdim, ONE, V, kdmx, V, kdmx, ZERO, sc, nvecx )
+       DO i = 1, j
+          sc(i,i) = ONE
+       END DO
     END IF
-    CALL mp_sum( sc(1:j, 1:j), intra_bgrp_comm )
     !
-    ! ... Symmetrize (ensure Hermitian)
+    ! ... Symmetrize hc (ensure Hermitian)
     !
     DO i = 1, j
        hc(i,i) = CMPLX( REAL( hc(i,i) ), 0.0_DP, kind=DP )
-       sc(i,i) = CMPLX( REAL( sc(i,i) ), 0.0_DP, kind=DP )
        DO k = i + 1, j
           hc(i,k) = CONJG( hc(k,i) )
-          sc(i,k) = CONJG( sc(k,i) )
        END DO
     END DO
     !
@@ -703,24 +709,24 @@ CONTAINS
        hc(jj,jj) = CMPLX( REAL( hc(jj,jj) ), 0.0_DP, kind=DP )
     END DO
     !
-    ! ... Update projected overlap (blocked ZGEMM)
+    ! ... Update projected overlap (identity when no USPP)
     !
     IF ( uspp ) THEN
        CALL ZGEMM( 'C', 'N', j+nact, nact, kdim, ONE, V, kdmx, &
                    SW(1,j+1), kdmx, ZERO, sc(1,j+1), nvecx )
-    ELSE
-       CALL ZGEMM( 'C', 'N', j+nact, nact, kdim, ONE, V, kdmx, &
-                   V(1,j+1), kdmx, ZERO, sc(1,j+1), nvecx )
-    END IF
-    CALL mp_sum( sc(1:j+nact, j+1:j+nact), intra_bgrp_comm )
-    !
-    DO ib = 1, nact
-       jj = j + ib
-       DO ii = 1, jj - 1
-          sc(jj,ii) = CONJG( sc(ii,jj) )
+       CALL mp_sum( sc(1:j+nact, j+1:j+nact), intra_bgrp_comm )
+       DO ib = 1, nact
+          jj = j + ib
+          DO ii = 1, jj - 1
+             sc(jj,ii) = CONJG( sc(ii,jj) )
+          END DO
+          sc(jj,jj) = CMPLX( REAL( sc(jj,jj) ), 0.0_DP, kind=DP )
        END DO
-       sc(jj,jj) = CMPLX( REAL( sc(jj,jj) ), 0.0_DP, kind=DP )
-    END DO
+    ELSE
+       DO ib = 1, nact
+          sc(j+ib, j+ib) = ONE
+       END DO
+    END IF
     !
     j = j + nact
     !
@@ -776,11 +782,11 @@ CONTAINS
     !
     IF ( uspp ) THEN
        CALL ZGEMV( 'C', kdim, 1, ONE, V, kdmx, SW(1,1), 1, ZERO, sc(1,1), 1 )
+       CALL mp_sum( sc(1:1, 1:1), intra_bgrp_comm )
+       sc(1,1) = CMPLX( REAL( sc(1,1) ), 0.0_DP, kind=DP )
     ELSE
-       CALL ZGEMV( 'C', kdim, 1, ONE, V, kdmx, V(1,1), 1, ZERO, sc(1,1), 1 )
+       sc(1,1) = ONE
     END IF
-    CALL mp_sum( sc(1:1, 1:1), intra_bgrp_comm )
-    sc(1,1) = CMPLX( REAL( sc(1,1) ), 0.0_DP, kind=DP )
     !
   END SUBROUTINE cjd_reinit_subspace
   !

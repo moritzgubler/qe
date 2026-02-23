@@ -641,18 +641,33 @@ CONTAINS
     !
     nact = 0
     !
+    ! ... Phase 1 (BLAS3): orthogonalize all nb_in corrections against
+    ! ... the existing j subspace vectors at once.
+    !
+    DO i = 1, 2
+       CALL ZGEMM( 'C', 'N', j, nb_in, kdim, ONE, V, kdmx, &
+                   rb, kdmx, ZERO, work2d, nvecx )
+       CALL mp_sum( work2d(1:j, 1:nb_in), intra_bgrp_comm )
+       CALL ZGEMM( 'N', 'N', kdim, nb_in, j, -ONE, V, kdmx, &
+                   work2d, nvecx, ONE, rb, kdmx )
+    END DO
+    !
+    ! ... Phase 2 (sequential, cheap): orthogonalize among the nb_in
+    ! ... new vectors, normalize, and accept into search space.
+    !
     DO ib = 1, nb_in
        !
-       ! ... Orthogonalize rb(:,ib) against V(:,1:j+nact) (double Gram-Schmidt)
-       ! ... This includes previously accepted corrections in V(:,j+1:j+nact)
+       ! ... Orthogonalize against previously accepted new vectors
        !
-       DO i = 1, 2
-          CALL ZGEMV( 'C', kdim, j+nact, ONE, V, kdmx, rb(1,ib), 1, &
-                      ZERO, work2d(1,1), 1 )
-          CALL mp_sum( work2d(1:j+nact,1), intra_bgrp_comm )
-          CALL ZGEMV( 'N', kdim, j+nact, -ONE, V, kdmx, work2d(1,1), 1, &
-                      ONE, rb(1,ib), 1 )
-       END DO
+       IF ( nact > 0 ) THEN
+          DO i = 1, 2
+             CALL ZGEMV( 'C', kdim, nact, ONE, V(1,j+1), kdmx, rb(1,ib), 1, &
+                         ZERO, work2d(1,1), 1 )
+             CALL mp_sum( work2d(1:nact,1), intra_bgrp_comm )
+             CALL ZGEMV( 'N', kdim, nact, -ONE, V(1,j+1), kdmx, work2d(1,1), 1, &
+                         ONE, rb(1,ib), 1 )
+          END DO
+       END IF
        !
        ! ... Normalize
        !

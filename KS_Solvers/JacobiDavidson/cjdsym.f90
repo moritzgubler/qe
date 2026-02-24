@@ -87,8 +87,6 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, g_psi_ptr, &
   !
   lrot_active = lrot
   !
-  print*, npw, npwx, nvec, nvecx
-  !
   empty_ethr = MAX( ethr * 5.D0, 1.D-5 )
   e_old = 1.0D10
   !

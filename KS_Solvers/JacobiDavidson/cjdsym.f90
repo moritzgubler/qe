@@ -46,6 +46,8 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, g_psi_ptr, &
   ! ... LOCAL variables
   !
   INTEGER, PARAMETER :: maxter = 20
+  INTEGER, PARAMETER :: nbuf = 5
+    ! number of buffer bands beyond nvec to keep in the search space
   INTEGER :: nblock
     ! number of correction vectors per iteration
   REAL(DP), PARAMETER :: default_shift = 1.0_DP
@@ -53,9 +55,11 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, g_psi_ptr, &
   !
   INTEGER :: j, nconv, iter, kdim, kdmx, ierr
   INTEGER :: i, ig, ipol, ib, nb, nact, nconv_new, k
+  INTEGER :: nvec_work, nvecx_loc
   REAL(DP) :: empty_ethr, norm_t
   LOGICAL :: lprint, lrot_active
-  REAL(DP) :: rnorms(nvec), e_old(nvec)
+  REAL(DP), ALLOCATABLE :: rnorms(:)
+  REAL(DP) :: e_old(nvec)
   !
   COMPLEX(DP), ALLOCATABLE :: V(:,:), W(:,:), SW(:,:)
     ! search space basis vectors / H * V / S * V
@@ -78,12 +82,14 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, g_psi_ptr, &
     ! g_psi_ptr(npwx,npw,notcnv,npol,psi,e)
     !     calculates (diag(h)-e)^-1 * psi, diagonal approx. to (h-e)^-1*psi
   !
+  nvec_work = nvec + nbuf
+  nvecx_loc = nvecx + nbuf
   nblock = nvec
   nhpsi = 0
   lprint = .FALSE.
   CALL start_clock( 'cjdsym' )
   !
-  IF ( nvec > nvecx / 2 ) CALL errore( 'cjdsym', 'nvecx is too small', 1 )
+  IF ( nvec_work + nblock > nvecx_loc ) CALL errore( 'cjdsym', 'nvecx is too small', 1 )
   !
   lrot_active = lrot
   !
@@ -101,32 +107,33 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, g_psi_ptr, &
   !
   ! ... Allocate workspace
   !
-  ALLOCATE( V( npwx*npol, nvecx ), STAT=ierr )
+  ALLOCATE( V( npwx*npol, nvecx_loc ), STAT=ierr )
   IF( ierr /= 0 ) CALL errore( 'cjdsym', 'cannot allocate V', ABS(ierr) )
-  ALLOCATE( W( npwx*npol, nvecx ), STAT=ierr )
+  ALLOCATE( W( npwx*npol, nvecx_loc ), STAT=ierr )
   IF( ierr /= 0 ) CALL errore( 'cjdsym', 'cannot allocate W', ABS(ierr) )
   !
   IF ( uspp ) THEN
-     ALLOCATE( SW( npwx*npol, nvecx ), STAT=ierr )
+     ALLOCATE( SW( npwx*npol, nvecx_loc ), STAT=ierr )
      IF( ierr /= 0 ) CALL errore( 'cjdsym', 'cannot allocate SW', ABS(ierr) )
   END IF
   !
-  ALLOCATE( hc( nvecx, nvecx ), STAT=ierr )
+  ALLOCATE( hc( nvecx_loc, nvecx_loc ), STAT=ierr )
   IF( ierr /= 0 ) CALL errore( 'cjdsym', 'cannot allocate hc', ABS(ierr) )
-  ALLOCATE( sc( nvecx, nvecx ), STAT=ierr )
+  ALLOCATE( sc( nvecx_loc, nvecx_loc ), STAT=ierr )
   IF( ierr /= 0 ) CALL errore( 'cjdsym', 'cannot allocate sc', ABS(ierr) )
-  ALLOCATE( vc( nvecx, nvecx ), STAT=ierr )
+  ALLOCATE( vc( nvecx_loc, nvecx_loc ), STAT=ierr )
   IF( ierr /= 0 ) CALL errore( 'cjdsym', 'cannot allocate vc', ABS(ierr) )
-  ALLOCATE( ew( nvecx ), STAT=ierr )
+  ALLOCATE( ew( nvecx_loc ), STAT=ierr )
   IF( ierr /= 0 ) CALL errore( 'cjdsym', 'cannot allocate ew', ABS(ierr) )
   !
+  ALLOCATE( rnorms( nblock ) )
   ALLOCATE( ub( npwx*npol, nblock ) )
   ALLOCATE( rb( npwx*npol, nblock ) )
   ALLOCATE( tb( npwx*npol, nblock ) )
-  ALLOCATE( work2d( nvecx, nblock ) )
-  ALLOCATE( Vtmp( npwx*npol, nvecx ) )
-  ALLOCATE( Wtmp( npwx*npol, nvecx ) )
-  IF ( uspp ) ALLOCATE( SWtmp( npwx*npol, nvecx ) )
+  ALLOCATE( work2d( nvecx_loc, nblock ) )
+  ALLOCATE( Vtmp( npwx*npol, nvecx_loc ) )
+  ALLOCATE( Wtmp( npwx*npol, nvecx_loc ) )
+  IF ( uspp ) ALLOCATE( SWtmp( npwx*npol, nvecx_loc ) )
   !
   ! ... Initialize subspace with input eigenvectors
   !
@@ -149,14 +156,14 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, g_psi_ptr, &
      !
      ! ... Block size for this iteration
      !
-     nb = MIN( nblock, nvec - nconv, j )
+     nb = MIN( nblock, nvec_work - nconv, j )
      IF ( nb < 1 ) nb = 1
      !
      ! ... Restart if not enough room for nb new vectors
      !
-     IF ( j + nb > nvecx ) THEN
+     IF ( j + nb > nvecx_loc ) THEN
         CALL cjd_restart()
-        nb = MIN( nblock, nvec - nconv, j, nvecx - j )
+        nb = MIN( nblock, nvec_work - nconv, j, nvecx_loc - j )
         IF ( nb < 1 ) nb = 1
         ! ... Re-diag so vc matches the restarted (smaller) j
         CALL cjd_diag_projected()
@@ -169,7 +176,7 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, g_psi_ptr, &
      ! ... Check convergence (consecutive from pair 1)
      !
      nconv_new = 0
-     DO ib = 1, nb
+     DO ib = 1, MIN(nb, nvec - nconv)
         IF ( btype(nconv+ib) == 1 ) THEN
            IF ( ABS( ew(ib) - e_old(nconv+ib) ) < ethr ) THEN
               nconv_new = nconv_new + 1
@@ -244,8 +251,28 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, g_psi_ptr, &
   notcnv = nvec - nconv
   !
   WRITE(6, '(5X,"cjdsym: finished. nconv=",I4," notcnv=",I4,' // &
-       '" iter=",I4," nhpsi=",I6)') nconv, notcnv, jd_iter, nhpsi
+       '" iter=",I4," nhpsi=",I6," j=",I4)') nconv, notcnv, jd_iter, nhpsi, j
   FLUSH(6)
+  !
+  ! ... Sanity checks: catch NaN eigenvalues and non-unit evc norms early
+  !
+  DO i = 1, nvec
+     IF ( e(i) /= e(i) ) THEN
+        WRITE(6,'(5X,"cjdsym BUG: NaN in e(",I4,")")') i
+        CALL errore( 'cjdsym', 'NaN eigenvalue', i )
+     END IF
+  END DO
+  DO i = 1, nconv
+     norm_t = 0.0_DP
+     DO ig = 1, kdim
+        norm_t = norm_t + DBLE( CONJG(evc(ig,i)) * evc(ig,i) )
+     END DO
+     CALL mp_sum( norm_t, intra_bgrp_comm )
+     IF ( ABS(norm_t - 1.0_DP) > 1.0D-4 ) THEN
+        WRITE(6,'(5X,"cjdsym BUG: evc(",I4,") norm=",ES12.4)') i, SQRT(norm_t)
+        CALL errore( 'cjdsym', 'non-unit eigenvector norm', i )
+     END IF
+  END DO
   !
   ! ... For any remaining unconverged eigenvalues, use best Ritz approximation
   !
@@ -266,6 +293,7 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, g_psi_ptr, &
   DEALLOCATE( Wtmp, Vtmp )
   DEALLOCATE( work2d )
   DEALLOCATE( tb, rb, ub )
+  DEALLOCATE( rnorms )
   DEALLOCATE( ew )
   DEALLOCATE( vc, sc, hc )
   IF ( uspp ) DEALLOCATE( SW )
@@ -347,13 +375,13 @@ CONTAINS
     !
     ! ... Build projected Hamiltonian hc = V^H * W
     !
-    CALL ZGEMM( 'C', 'N', j, j, kdim, ONE, V, kdmx, W, kdmx, ZERO, hc, nvecx )
+    CALL ZGEMM( 'C', 'N', j, j, kdim, ONE, V, kdmx, W, kdmx, ZERO, hc, nvecx_loc )
     CALL mp_sum( hc(1:j, 1:j), intra_bgrp_comm )
     !
     ! ... Build projected overlap sc = V^H * S*V (identity when no USPP)
     !
     IF ( uspp ) THEN
-       CALL ZGEMM( 'C', 'N', j, j, kdim, ONE, V, kdmx, SW, kdmx, ZERO, sc, nvecx )
+       CALL ZGEMM( 'C', 'N', j, j, kdim, ONE, V, kdmx, SW, kdmx, ZERO, sc, nvecx_loc )
        CALL mp_sum( sc(1:j, 1:j), intra_bgrp_comm )
        DO i = 1, j
           sc(i,i) = CMPLX( REAL( sc(i,i) ), 0.0_DP, kind=DP )
@@ -407,7 +435,7 @@ CONTAINS
     ELSE
        !
        IF ( my_bgrp_id == root_bgrp_id ) THEN
-          CALL diaghg( j, j, hc, sc, nvecx, ew, vc, &
+          CALL diaghg( j, j, hc, sc, nvecx_loc, ew, vc, &
                        me_bgrp, root_bgrp, intra_bgrp_comm )
        END IF
        IF ( nbgrp > 1 ) THEN
@@ -434,18 +462,18 @@ CONTAINS
     ! ... Compute Ritz vectors: ub(:,1:nb) = V * vc(:,1:nb)
     !
     CALL ZGEMM( 'N', 'N', kdim, nb_in, j, ONE, V, kdmx, &
-                vc(1,1), nvecx, ZERO, ub, kdmx )
+                vc(1,1), nvecx_loc, ZERO, ub, kdmx )
     !
     ! ... Compute H * Ritz vectors: rb = W * vc(:,1:nb) (temporary)
     !
     CALL ZGEMM( 'N', 'N', kdim, nb_in, j, ONE, W, kdmx, &
-                vc(1,1), nvecx, ZERO, rb, kdmx )
+                vc(1,1), nvecx_loc, ZERO, rb, kdmx )
     !
     ! ... Compute S * Ritz vectors (into tb) and form residuals
     !
     IF ( uspp ) THEN
        CALL ZGEMM( 'N', 'N', kdim, nb_in, j, ONE, SW, kdmx, &
-                   vc(1,1), nvecx, ZERO, tb, kdmx )
+                   vc(1,1), nvecx_loc, ZERO, tb, kdmx )
        DO ib = 1, nb_in
           rb(1:kdim,ib) = rb(1:kdim,ib) - ew(ib) * tb(1:kdim,ib)
        END DO
@@ -460,10 +488,10 @@ CONTAINS
     IF ( nconv > 0 ) THEN
        DO i = 1, 2
           CALL ZGEMM( 'C', 'N', nconv, nb_in, kdim, ONE, evc, kdmx, &
-                      rb, kdmx, ZERO, work2d, nvecx )
+                      rb, kdmx, ZERO, work2d, nvecx_loc )
           CALL mp_sum( work2d(1:nconv, 1:nb_in), intra_bgrp_comm )
           CALL ZGEMM( 'N', 'N', kdim, nb_in, nconv, -ONE, evc, kdmx, &
-                      work2d, nvecx, ONE, rb, kdmx )
+                      work2d, nvecx_loc, ONE, rb, kdmx )
        END DO
     END IF
     !
@@ -496,16 +524,16 @@ CONTAINS
        jnew = j - nrem
        !
        CALL ZGEMM( 'N', 'N', kdim, jnew, j, ONE, V, kdmx, &
-                   vc(1,nrem+1), nvecx, ZERO, Vtmp, kdmx )
+                   vc(1,nrem+1), nvecx_loc, ZERO, Vtmp, kdmx )
        V(1:npwx*npol, 1:jnew) = Vtmp(1:npwx*npol, 1:jnew)
        !
        CALL ZGEMM( 'N', 'N', kdim, jnew, j, ONE, W, kdmx, &
-                   vc(1,nrem+1), nvecx, ZERO, Wtmp, kdmx )
+                   vc(1,nrem+1), nvecx_loc, ZERO, Wtmp, kdmx )
        W(1:npwx*npol, 1:jnew) = Wtmp(1:npwx*npol, 1:jnew)
        !
        IF ( uspp ) THEN
           CALL ZGEMM( 'N', 'N', kdim, jnew, j, ONE, SW, kdmx, &
-                      vc(1,nrem+1), nvecx, ZERO, SWtmp, kdmx )
+                      vc(1,nrem+1), nvecx_loc, ZERO, SWtmp, kdmx )
           SW(1:npwx*npol, 1:jnew) = SWtmp(1:npwx*npol, 1:jnew)
        END IF
        !
@@ -542,7 +570,7 @@ CONTAINS
     !
     CALL start_clock( 'cjdsym:restart' )
     !
-    jnew = MIN( nvec - nconv, j )
+    jnew = MIN( nvec_work - nconv, j )
     !
     IF ( lprint ) THEN
        WRITE(6, '(5X,"cjdsym: RESTART j=",I4," -> ",I4)') j, jnew
@@ -550,16 +578,16 @@ CONTAINS
     END IF
     !
     CALL ZGEMM( 'N', 'N', kdim, jnew, j, ONE, V, kdmx, &
-                vc(1,1), nvecx, ZERO, Vtmp, kdmx )
+                vc(1,1), nvecx_loc, ZERO, Vtmp, kdmx )
     V(1:npwx*npol, 1:jnew) = Vtmp(1:npwx*npol, 1:jnew)
     !
     CALL ZGEMM( 'N', 'N', kdim, jnew, j, ONE, W, kdmx, &
-                vc(1,1), nvecx, ZERO, Wtmp, kdmx )
+                vc(1,1), nvecx_loc, ZERO, Wtmp, kdmx )
     W(1:npwx*npol, 1:jnew) = Wtmp(1:npwx*npol, 1:jnew)
     !
     IF ( uspp ) THEN
        CALL ZGEMM( 'N', 'N', kdim, jnew, j, ONE, SW, kdmx, &
-                   vc(1,1), nvecx, ZERO, SWtmp, kdmx )
+                   vc(1,1), nvecx_loc, ZERO, SWtmp, kdmx )
        SW(1:npwx*npol, 1:jnew) = SWtmp(1:npwx*npol, 1:jnew)
     END IF
     !
@@ -612,10 +640,10 @@ CONTAINS
     IF ( nconv > 0 ) THEN
        DO i = 1, 2
           CALL ZGEMM( 'C', 'N', nconv, nb_in, kdim, ONE, evc, kdmx, &
-                      rb, kdmx, ZERO, work2d, nvecx )
+                      rb, kdmx, ZERO, work2d, nvecx_loc )
           CALL mp_sum( work2d(1:nconv, 1:nb_in), intra_bgrp_comm )
           CALL ZGEMM( 'N', 'N', kdim, nb_in, nconv, -ONE, evc, kdmx, &
-                      work2d, nvecx, ONE, rb, kdmx )
+                      work2d, nvecx_loc, ONE, rb, kdmx )
        END DO
     END IF
     !
@@ -644,10 +672,10 @@ CONTAINS
     !
     DO i = 1, 2
        CALL ZGEMM( 'C', 'N', j, nb_in, kdim, ONE, V, kdmx, &
-                   rb, kdmx, ZERO, work2d, nvecx )
+                   rb, kdmx, ZERO, work2d, nvecx_loc )
        CALL mp_sum( work2d(1:j, 1:nb_in), intra_bgrp_comm )
        CALL ZGEMM( 'N', 'N', kdim, nb_in, j, -ONE, V, kdmx, &
-                   work2d, nvecx, ONE, rb, kdmx )
+                   work2d, nvecx_loc, ONE, rb, kdmx )
     END DO
     !
     ! ... Phase 2 (sequential, cheap): orthogonalize among the nb_in
@@ -691,6 +719,10 @@ CONTAINS
        ! ... Accept: place into search space
        !
        nact = nact + 1
+       IF ( j + nact > nvecx_loc ) THEN
+          WRITE(6,'(5X,"cjdsym BUG: j+nact=",I4," > nvecx_loc=",I4)') j+nact, nvecx_loc
+          CALL errore( 'cjdsym', 'subspace overflow', j+nact )
+       END IF
        V(1:npwx*npol, j+nact) = rb(1:npwx*npol, ib)
        !
     END DO
@@ -699,11 +731,10 @@ CONTAINS
     !
     IF ( nact == 0 ) RETURN
     !
-    ! ... Compute H*V and S*V for new columns (single blocked call)
+    ! ... Compute H*V and S*V for new columns (nact <= nblock = nvec <= nbnd).
     !
     CALL h_psi_ptr( npwx, npw, nact, V(1,j+1), W(1,j+1) )
     nhpsi = nhpsi + nact
-    !
     IF ( uspp ) CALL s_psi_ptr( npwx, npw, nact, V(1,j+1), SW(1,j+1) )
     !
     ! ... Update projected Hamiltonian (blocked ZGEMM)
@@ -711,7 +742,7 @@ CONTAINS
     CALL start_clock( 'cjdsym:overlap' )
     !
     CALL ZGEMM( 'C', 'N', j+nact, nact, kdim, ONE, V, kdmx, &
-                W(1,j+1), kdmx, ZERO, hc(1,j+1), nvecx )
+                W(1,j+1), kdmx, ZERO, hc(1,j+1), nvecx_loc )
     CALL mp_sum( hc(1:j+nact, j+1:j+nact), intra_bgrp_comm )
     !
     DO ib = 1, nact
@@ -726,7 +757,7 @@ CONTAINS
     !
     IF ( uspp ) THEN
        CALL ZGEMM( 'C', 'N', j+nact, nact, kdim, ONE, V, kdmx, &
-                   SW(1,j+1), kdmx, ZERO, sc(1,j+1), nvecx )
+                   SW(1,j+1), kdmx, ZERO, sc(1,j+1), nvecx_loc )
        CALL mp_sum( sc(1:j+nact, j+1:j+nact), intra_bgrp_comm )
        DO ib = 1, nact
           jj = j + ib

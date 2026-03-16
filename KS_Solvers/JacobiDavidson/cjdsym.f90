@@ -83,8 +83,8 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, g_psi_ptr, &
     !     calculates (diag(h)-e)^-1 * psi, diagonal approx. to (h-e)^-1*psi
   !
   nvec_work = nvec + nbuf
-  nvecx_loc = nvecx + nbuf
-  nblock = nvec
+  nvecx_loc = nvecx + 2*nbuf
+  nblock = nvec_work
   nhpsi = 0
   lprint = .FALSE.
   CALL start_clock( 'cjdsym' )
@@ -195,7 +195,7 @@ SUBROUTINE cjdsym( h_psi_ptr, s_psi_ptr, uspp, g_psi_ptr, &
      IF ( lprint ) THEN
         WRITE(6, '(5X,"cjdsym it=",I4," nconv=",I3," j=",I3,' // &
              '" nb=",I2," de=",4ES10.3)') &
-             iter, nconv, j, nb, (ABS(ew(ib) - e_old(nconv+ib)), ib=1, MIN(nb,4))
+             iter, nconv, j, nb, (ABS(ew(ib) - e_old(nconv+ib)), ib=1, MIN(nb,nvec-nconv,4))
         FLUSH(6)
      END IF
      !
@@ -731,7 +731,7 @@ CONTAINS
     !
     IF ( nact == 0 ) RETURN
     !
-    ! ... Compute H*V and S*V for new columns (nact <= nblock = nvec <= nbnd).
+    ! ... Compute H*V and S*V for new columns (nact <= nblock = nvec_work <= nbnd+nbuf).
     !
     CALL h_psi_ptr( npwx, npw, nact, V(1,j+1), W(1,j+1) )
     nhpsi = nhpsi + nact

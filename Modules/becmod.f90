@@ -67,7 +67,12 @@ MODULE becmod
   !
   PUBLIC :: bec_type, becp, calbec, beccopy, becscal, becupdate, is_allocated_bec_type, &
             allocate_bec_type,     deallocate_bec_type, &
-            allocate_bec_type_acc, deallocate_bec_type_acc
+            allocate_bec_type_acc, deallocate_bec_type_acc, &
+            nbuf_jd
+  !
+  INTEGER, PARAMETER :: nbuf_jd = 10
+    !! Extra bands allocated in becp to accommodate the Jacobi-Davidson buffer.
+    !! Must match the nbuf parameter in KS_Solvers/JacobiDavidson/cjdsym.f90 (and rjdsym.f90).
   !
 CONTAINS
   !

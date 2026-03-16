@@ -208,7 +208,8 @@ SUBROUTINE diag_bands( iter, ik, avg_iter )
                                    gdir, l3dstring, efield, efield_cry
   USE becmod,               ONLY : bec_type, becp, calbec, &
                                    allocate_bec_type, deallocate_bec_type, &
-                                   allocate_bec_type_acc, deallocate_bec_type_acc
+                                   allocate_bec_type_acc, deallocate_bec_type_acc, &
+                                   nbuf_jd
   USE klist,                ONLY : nks, ngk
   USE gcscf_module,         ONLY : lgcscf
   USE mp_bands,             ONLY : nproc_bgrp, intra_bgrp_comm, inter_bgrp_comm, &
@@ -287,7 +288,7 @@ SUBROUTINE diag_bands( iter, ik, avg_iter )
   !
   ! ... allocate space for <beta_i|psi_j> - used in h_psi and s_psi
   !
-  CALL allocate_bec_type_acc( nkb, nbnd, becp, intra_bgrp_comm )
+  CALL allocate_bec_type_acc( nkb, nbnd + nbuf_jd, becp, intra_bgrp_comm )
   !
   npw = ngk(ik)
   IF ( gamma_only ) THEN

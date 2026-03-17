@@ -220,14 +220,16 @@ SUBROUTINE lr_apply_liouvillian( evc1, evc1_new, interaction )
   !
   ! S. Binnie: Make sure the psic workspace is availible.
   !
-  ALLOCATE ( psic (dffts%nnr) )
+  ALLOCATE ( psic (dffts%nnr) ) 
   !
   IF ( gamma_only ) THEN
+     !$acc enter data create(psic)     
      CALL lr_apply_liouvillian_gamma()
+     !$acc exit data delete(psic)
   ELSE
      CALL lr_apply_liouvillian_k()
   ENDIF
-  !
+  ! 
   DEALLOCATE ( psic )
   !
   IF ( (interaction .or. lr_exx) .and. (.not.ltammd)  ) THEN
@@ -377,12 +379,11 @@ CONTAINS
     ! Now apply to the ground state wavefunctions
     ! and convert to real space
     !
-    nnr_siz= dffts%nnr
-    !$acc data create (psic(1:nnr_siz))
+    nnr_siz= dffts%nnr 
     !
     IF ( interaction ) THEN
        !
-       !
+       ! 
        CALL start_clock_gpu('interaction')
        !
        IF (nkb > 0 .and. okvan) THEN
@@ -477,8 +478,8 @@ CONTAINS
              !
           ENDIF
           !
-          IF (lr_exx) THEN
-             CALL lr_exx_apply_revc_int(psic, ibnd, nbnd,1)
+          IF (lr_exx) THEN 
+             CALL lr_exx_apply_revc_int(psic, ibnd, nbnd,1) 
           ENDIF
           !
           IF (real_space .and. okvan .and. nkb > 0) THEN
@@ -569,18 +570,16 @@ CONTAINS
        !
     ENDIF
     !
-    IF (lr_exx .AND. .NOT.interaction) CALL lr_exx_kernel_noint(evc1,evc1_new)
+    IF (lr_exx .AND. .NOT.interaction) THEN
+            CALL lr_exx_kernel_noint(evc1,evc1_new) 
+    ENDIF
     !
     ! The kinetic energy g2kin was already computed when
     ! calling the routine lr_solve_e.
     !
     ! Compute sevc1_new = H*evc1
     !
-#if defined(__CUDA)
-    CALL h_psi_gpu (npwx,ngk(1),nbnd,evc1(1,1,1),sevc1_new(1,1,1))
-#else
     CALL h_psi(npwx,ngk(1),nbnd,evc1(1,1,1),sevc1_new(1,1,1))
-#endif
     !
     ! Compute spsi1 = S*evc1 
     !
@@ -591,11 +590,7 @@ CONTAINS
            CALL fwfft_orbital_gamma(spsi1,ibnd,nbnd)
         ENDDO
     ELSE
-#if defined(__CUDA)
-       CALL s_psi_acc (npwx,ngk(1),nbnd,evc1(1,1,1),spsi1)
-#else            
-       CALL s_psi(npwx,ngk(1),nbnd,evc1(1,1,1),spsi1)
-#endif
+    CALL s_psi(npwx,ngk(1),nbnd,evc1(1,1,1),spsi1)
     ENDIF
     !
     !   Subtract the eigenvalues
@@ -609,8 +604,6 @@ CONTAINS
        !$acc end host_data       
        !
     ENDDO
-    !
-    !$acc end data 
     !
     IF ( nkb > 0 .and. okvan ) DEALLOCATE(becp2)
     !

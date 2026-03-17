@@ -44,7 +44,7 @@ SUBROUTINE run_pwscf( exit_status )
   USE cell_base,            ONLY : fix_volume, fix_area
   USE control_flags,        ONLY : conv_elec, gamma_only, ethr, lscf, treinit_gvecs
   USE control_flags,        ONLY : conv_ions, istep, nstep, restart, lmd, lbfgs, lsqnm,&
-                                   lensemb, lforce=>tprnfor, tstress
+                                   lensemb, lforce, tstress
   USE cellmd,               ONLY : lmovecell
   USE command_line_options, ONLY : command_line
   USE force_mod,            ONLY : sigma, force
@@ -416,19 +416,22 @@ END SUBROUTINE reset_gvectors
 !-------------------------------------------------------------
 SUBROUTINE reset_exx( )
 !-------------------------------------------------------------
-  USE fft_types,  ONLY : fft_type_deallocate 
-  USE exx_base,   ONLY : exx_grid_init, exx_mp_init, exx_div_check, & 
-                         coulomb_fac, coulomb_done 
-  USE exx,        ONLY : dfftt, exx_fft_create, deallocate_exx 
-  USE exx_band,   ONLY : igk_exx 
+  USE fft_types,    ONLY : fft_type_deallocate 
+  USE exx_base,     ONLY : exx_grid_init, exx_mp_init, exx_div_check, & 
+                         exx_bgrp_type, EXX_BGRP_PAIRS
+  USE exx,          ONLY : dfftt, exx_fft_create, deallocate_exx 
+  USE exx_bp,       ONLY : coulomb_fac, coulomb_done
+  USE exx_bp_utils, ONLY : igk_exx 
   ! 
   IMPLICIT NONE
   !
   ! ... re-set EXX-related stuff...
   !
-  IF (ALLOCATED(coulomb_fac) ) DEALLOCATE( coulomb_fac, coulomb_done )
   CALL deallocate_exx( )
-  IF (ALLOCATED(igk_exx)) DEALLOCATE(igk_exx) 
+  IF(exx_bgrp_type .eq. EXX_BGRP_PAIRS ) THEN
+    IF (ALLOCATED(coulomb_fac) ) DEALLOCATE( coulomb_fac, coulomb_done )
+    IF (ALLOCATED(igk_exx)) DEALLOCATE(igk_exx) 
+  END IF
   dfftt%nr1=0; dfftt%nr2=0; dfftt%nr3=0 
   CALL fft_type_deallocate( dfftt ) ! FIXME: is this needed?
   !

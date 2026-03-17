@@ -291,10 +291,9 @@ SUBROUTINE control_iosys()
                             rmm_ndim, rmm_conv, gs_nblock, rmm_with_davidson, &
                             tr2, imix, gamma_only, tnosep, tnoseh, &
                             nmix, iverbosity, smallmem, nexxiter, niter, &
-                            io_level, ethr, lscf, lbfgs, lsqnm, lmd, &
-                            lbands, lconstrain, restart, &
+                            io_level, ethr, lscf, lbfgs, lsqnm, lmd, lforce, &
+                            lbands, lconstrain, restart, lensemb, &
                             llondon, ldftd3, do_makov_payne, lxdm, &
-                            lensemb, lforce   => tprnfor, &
                             tstress_          => tstress, &
                             remove_rigid_rot_ => remove_rigid_rot, &
                             diago_full_acc_   => diago_full_acc, &
@@ -1488,8 +1487,16 @@ SUBROUTINE magnetization_iosys()
      IF ( starting_magnetization(nt) == sm_not_set ) &
           starting_magnetization(nt) = 0.0_dp
   END DO
+  ! if any input value of starting_magnetization >1 in module  we assume user is using Bohr Magnetons 
+  ! we divide by z valence to have a relative magnetization value 
+  ! we further enforce relative value from now on. 
   IF (ANY(ABS(starting_magnetization(1:nsp)) .ge. 1._DP)) &
     starting_magnetization(1:nsp) = starting_magnetization(1:nsp) / zv(1:nsp)
+  DO nt = 1, nsp
+     starting_magnetization(nt) = MIN( 1.0_dp,starting_magnetization(nt))
+     starting_magnetization(nt) = MAX(-1.0_dp,starting_magnetization(nt))
+  ENDDO
+
   !
   !
   ! NONCOLLINEAR MAGNETISM, MAGNETIC CONSTRAINTS
@@ -1518,10 +1525,6 @@ SUBROUTINE magnetization_iosys()
      !
      ! ... bring starting_magnetization between -1 and 1
      !
-     DO nt = 1, nsp
-        starting_magnetization(nt) = MIN( 1.0_dp,starting_magnetization(nt))
-        starting_magnetization(nt) = MAX(-1.0_dp,starting_magnetization(nt))
-     ENDDO
      !
      i_cons = 0
      !
@@ -1546,16 +1549,16 @@ SUBROUTINE magnetization_iosys()
            theta = angle1(nt)
            phi   = angle2(nt)
            !
-           mcons(1,nt) = starting_magnetization(nt) * sin( theta ) * cos( phi )
-           mcons(2,nt) = starting_magnetization(nt) * sin( theta ) * sin( phi )
-           mcons(3,nt) = starting_magnetization(nt) * cos( theta )
+           mcons(1,nt) = zv(nt) * starting_magnetization(nt) * sin( theta ) * cos( phi )
+           mcons(2,nt) = zv(nt) * starting_magnetization(nt) * sin( theta ) * sin( phi )
+           mcons(3,nt) = zv(nt) * starting_magnetization(nt) * cos( theta )
            !
         ENDDO
      ELSE
         ! collinear case
         DO nt = 1, nsp
            !
-           mcons(1,nt) = starting_magnetization(nt)
+           mcons(1,nt) = zv(nt) * starting_magnetization(nt)
            !
         ENDDO
      ENDIF
@@ -2122,14 +2125,14 @@ SUBROUTINE exx_iosys ( ecutwfc, ecutrho )
                               exxdiv_treatment, yukawa, ecutvcut,          &
                               gau_parameter, localization_thr, scdm, ace,  &
                               scdmden, scdmgrd, nscdm, n_proj,             & 
-                              exx_fraction, screening_parameter, ecutfock 
+                              exx_fraction, exx_type, screening_parameter, ecutfock 
   USE io_global,     ONLY : stdout
   USE klist,         ONLY : tot_charge
   USE ions_base,     ONLY : nat, ityp, zv
   USE xc_lib,        ONLY:  xclib_dft_is
   USE xc_lib,        ONLY : xclib_set_exx_fraction, set_screening_parameter
   USE exx_base,      ONLY : x_gamma_extrapolation_ => x_gamma_extrapolation, &
-                            nq1, nq2, nq3, &
+                            nq1, nq2, nq3, exx_bgrp_type, EXX_BGRP_BANDS, EXX_BGRP_PAIRS, &
                             exxdiv_treatment_ => exxdiv_treatment, &
                             yukawa_           => yukawa, &
                             ecutvcut_         => ecutvcut
@@ -2182,6 +2185,20 @@ SUBROUTINE exx_iosys ( ecutwfc, ecutrho )
   !
   IF (screening_parameter >= 0.0_DP) &
         & CALL set_screening_parameter(screening_parameter)
+  !
+  write(stdout, '(/,5x,"Exact exchange band parallelism type set to ",A/)' ) trim(adjustl(exx_type))
+  !
+  select case(trim(adjustl(exx_type)))
+  case("bands")
+    exx_bgrp_type = EXX_BGRP_BANDS
+#if defined(__CUDA)
+    Call errore('input', 'EXX bands distribution on GPU NYI (use exx_type = band_pairs)',1)
+#endif
+  case("band_pairs")
+    exx_bgrp_type = EXX_BGRP_PAIRS
+  case default
+    CALL errore('input','Invalid value of exx_type (values: bands or band_pairs)',1)
+  end select
   !
 END SUBROUTINE exx_iosys
 
